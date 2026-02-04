@@ -291,6 +291,58 @@ class CursorRegister {
     }
 
     /**
+     * Клик на кнопку Continue/Submit с поиском по тексту
+     * @returns {boolean} - Была ли нажата кнопка
+     */
+    async clickContinueButton() {
+        try {
+            const clicked = await this.page.evaluate(() => {
+                // Приоритет 1: Кнопка type="submit"
+                const submitBtn = document.querySelector('button[type="submit"]');
+                if (submitBtn && !submitBtn.disabled) {
+                    submitBtn.click();
+                    return 'submit';
+                }
+                
+                // Приоритет 2: Поиск по тексту кнопки
+                const buttons = document.querySelectorAll('button');
+                const buttonTexts = ['continue', 'sign up', 'create account', 'register', 'submit', 'next'];
+                
+                for (const btn of buttons) {
+                    if (btn.disabled) continue;
+                    const text = btn.textContent.toLowerCase().trim();
+                    for (const searchText of buttonTexts) {
+                        if (text.includes(searchText)) {
+                            btn.click();
+                            return text;
+                        }
+                    }
+                }
+                
+                // Приоритет 3: Любая видимая кнопка с типом submit или primary стилем
+                const primaryBtn = document.querySelector('button.primary, button.btn-primary, button[data-testid*="submit"]');
+                if (primaryBtn && !primaryBtn.disabled) {
+                    primaryBtn.click();
+                    return 'primary';
+                }
+                
+                return null;
+            });
+            
+            if (clicked) {
+                this.log('info', `✅ Нажата кнопка: "${clicked}"`);
+                return true;
+            } else {
+                this.log('warning', '⚠️ Кнопка Continue/Submit не найдена');
+                return false;
+            }
+        } catch (error) {
+            this.log('error', `Ошибка клика на кнопку: ${error.message}`);
+            return false;
+        }
+    }
+
+    /**
      * Проверка наличия CAPTCHA
      */
     async checkForCaptcha() {
@@ -472,64 +524,99 @@ class CursorRegister {
                 fullPage: true 
             });
 
-            // Ищем форму регистрации
-            // Cursor использует разные варианты форм, пробуем найти нужные поля
+            // ==========================================
+            // Cursor использует ПОШАГОВУЮ регистрацию:
+            // Шаг 1: Email → Continue
+            // Шаг 2: First Name, Last Name → Continue  
+            // Шаг 3: Password → Continue
+            // Шаг 4: Verification email sent
+            // ==========================================
             
             // Вариант 1: Регистрация через email
             const emailInput = await this.page.$('input[type="email"], input[name="email"], input[placeholder*="email" i]');
             
             if (emailInput) {
-                // Вводим email
-                this.log('info', 'Ввод email...');
+                // ШАГ 1: Вводим email
+                this.log('info', '📝 Шаг 1: Ввод email...');
                 await this.humanType('input[type="email"], input[name="email"], input[placeholder*="email" i]', email);
                 await this.humanDelay(500, 1000);
 
-                // Ищем поле имени (если есть)
-                const nameInput = await this.page.$('input[name="name"], input[placeholder*="name" i], input[name="firstName"]');
-                if (nameInput) {
-                    this.log('info', 'Ввод имени...');
-                    await this.humanType('input[name="name"], input[placeholder*="name" i], input[name="firstName"]', fullName);
+                // Нажимаем Continue после email
+                this.log('info', '🔘 Нажимаем Continue после email...');
+                const emailContinueClicked = await this.clickContinueButton();
+                if (!emailContinueClicked) {
+                    this.log('warning', '⚠️ Кнопка Continue не найдена после email');
+                }
+                
+                // Ждём загрузки следующего шага
+                await this.humanDelay(2000, 3000);
+
+                // Делаем скриншот для отладки
+                await this.page.screenshot({ 
+                    path: `debug_step2_${accountId}.png`,
+                    fullPage: true 
+                });
+
+                // ШАГ 2: Ищем поля имени (First Name, Last Name)
+                const firstNameInput = await this.page.$('input[name="firstName"], input[placeholder*="first" i]');
+                const lastNameInput = await this.page.$('input[name="lastName"], input[placeholder*="last" i]');
+                const nameInput = await this.page.$('input[name="name"], input[placeholder*="name" i]');
+                
+                if (firstNameInput && lastNameInput) {
+                    this.log('info', '📝 Шаг 2: Ввод First Name и Last Name...');
+                    await this.humanType('input[name="firstName"], input[placeholder*="first" i]', firstName);
+                    await this.humanDelay(300, 500);
+                    await this.humanType('input[name="lastName"], input[placeholder*="last" i]', lastName);
                     await this.humanDelay(500, 1000);
+                    
+                    // Нажимаем Continue после имени
+                    this.log('info', '🔘 Нажимаем Continue после имени...');
+                    const nameContinueClicked = await this.clickContinueButton();
+                    if (!nameContinueClicked) {
+                        this.log('warning', '⚠️ Кнопка Continue не найдена после имени');
+                    }
+                    await this.humanDelay(2000, 3000);
+                } else if (nameInput) {
+                    this.log('info', '📝 Шаг 2: Ввод полного имени...');
+                    await this.humanType('input[name="name"], input[placeholder*="name" i]', fullName);
+                    await this.humanDelay(500, 1000);
+                    
+                    // Нажимаем Continue
+                    this.log('info', '🔘 Нажимаем Continue после имени...');
+                    const nameContinueClicked = await this.clickContinueButton();
+                    if (!nameContinueClicked) {
+                        this.log('warning', '⚠️ Кнопка Continue не найдена после имени');
+                    }
+                    await this.humanDelay(2000, 3000);
+                } else {
+                    this.log('info', '⏭️ Поля имени не найдены, возможно уже следующий шаг');
                 }
 
-                // Ищем поле пароля
+                // Делаем скриншот для отладки
+                await this.page.screenshot({ 
+                    path: `debug_step3_${accountId}.png`,
+                    fullPage: true 
+                });
+
+                // ШАГ 3: Ищем поле пароля
                 const passwordInput = await this.page.$('input[type="password"], input[name="password"]');
                 if (passwordInput) {
-                    this.log('info', 'Ввод пароля...');
+                    this.log('info', '📝 Шаг 3: Ввод пароля...');
                     await this.humanType('input[type="password"], input[name="password"]', password);
                     await this.humanDelay(500, 1000);
+                    
+                    // Нажимаем Continue/Submit после пароля
+                    this.log('info', '🔘 Нажимаем Continue/Submit после пароля...');
+                    const passwordContinueClicked = await this.clickContinueButton();
+                    if (!passwordContinueClicked) {
+                        this.log('warning', '⚠️ Кнопка Continue не найдена после пароля');
+                    }
+                    await this.humanDelay(2000, 3000);
+                } else {
+                    this.log('info', '⏭️ Поле пароля не найдено, возможно magic link');
                 }
 
-                // Ищем и кликаем кнопку подтверждения
-                this.log('info', 'Поиск кнопки отправки формы...');
-                const buttonClicked = await this.page.evaluate(() => {
-                    // Сначала ищем submit button
-                    const submitBtn = document.querySelector('button[type="submit"]');
-                    if (submitBtn) {
-                        submitBtn.click();
-                        return true;
-                    }
-                    // Ищем по тексту
-                    const buttons = document.querySelectorAll('button');
-                    for (const btn of buttons) {
-                        const text = btn.textContent.toLowerCase();
-                        if (text.includes('sign up') || 
-                            text.includes('continue') ||
-                            text.includes('create account') ||
-                            text.includes('register') ||
-                            text.includes('submit')) {
-                            btn.click();
-                            return true;
-                        }
-                    }
-                    return false;
-                });
-                
-                if (buttonClicked) {
-                    this.log('info', 'Форма отправлена');
-                } else {
-                    this.log('warning', 'Кнопка отправки не найдена');
-                }
+                this.log('info', '✅ Форма регистрации отправлена');
             } else {
                 // Альтернативный поток - может быть OAuth или magic link
                 this.log('warning', 'Стандартная форма не найдена, проверяем альтернативные методы...');
