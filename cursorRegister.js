@@ -385,29 +385,34 @@ class CursorRegister {
             const currentUrl = this.page.url();
             const pageContent = await this.page.content();
 
-            // Проверяем на ошибки
+            // Проверяем на ошибки в видимом тексте (не в HTML)
+            const visibleText = await this.page.evaluate(() => document.body.innerText.toLowerCase());
+            
             const errorMessages = [
                 'already exists',
-                'already registered',
+                'already registered', 
                 'email is taken',
                 'account already',
                 'invalid email',
                 'password too weak',
-                'error',
-                'failed'
+                'something went wrong',
+                'unable to create',
+                'registration failed'
             ];
 
             let hasError = false;
+            let foundError = '';
             for (const errorMsg of errorMessages) {
-                if (pageContent.toLowerCase().includes(errorMsg)) {
+                if (visibleText.includes(errorMsg)) {
                     hasError = true;
+                    foundError = errorMsg;
                     this.log('error', `Обнаружена ошибка: ${errorMsg}`);
                     break;
                 }
             }
 
             if (hasError) {
-                throw new Error('Ошибка регистрации - email может быть уже зарегистрирован');
+                throw new Error(`Ошибка регистрации: ${foundError}`);
             }
 
             // Проверяем на страницу подтверждения email
