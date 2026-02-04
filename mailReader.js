@@ -49,9 +49,11 @@ function extractVerificationCode(text) {
  * @param {string} email - Email адрес
  * @param {string} password - Пароль от почты
  * @param {number} limit - Максимум писем для проверки
+ * @param {function} logger - Функция логирования
+ * @param {boolean} noFilter - Не фильтровать письма (для отладки)
  * @returns {Promise<Array>} - Массив писем
  */
-function fetchCursorEmails(email, password, limit = 10) {
+function fetchCursorEmails(email, password, limit = 10, logger = null, noFilter = false) {
     return new Promise((resolve, reject) => {
         const imap = new Imap({
             user: email,
@@ -65,6 +67,7 @@ function fetchCursorEmails(email, password, limit = 10) {
         });
 
         const messages = [];
+        const allMessages = []; // Все письма без фильтра для отладки
         let resolved = false;
 
         const cleanup = () => {
@@ -82,6 +85,7 @@ function fetchCursorEmails(email, password, limit = 10) {
                 }
 
                 const totalMessages = box.messages.total;
+                if (logger) logger(`[MAIL] 📥 Всего писем в INBOX: ${totalMessages}`);
                 
                 if (totalMessages === 0) {
                     cleanup();
@@ -118,39 +122,49 @@ function fetchCursorEmails(email, password, limit = 10) {
                         try {
                             const parsed = await simpleParser(rawEmail);
                             
-                            // Фильтруем только письма от Cursor
                             const fromAddress = parsed.from?.text?.toLowerCase() || '';
                             const subject = parsed.subject?.toLowerCase() || '';
                             
-                            if (fromAddress.includes('cursor') || 
+                            const textContent = parsed.text || '';
+                            const htmlContent = parsed.html || '';
+                            
+                            // Убираем HTML теги для поиска кода
+                            const plainText = htmlContent
+                                .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+                                .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+                                .replace(/<[^>]+>/g, ' ')
+                                .replace(/&nbsp;/g, ' ')
+                                .replace(/\s+/g, ' ');
+                            
+                            const code = extractVerificationCode(textContent) || 
+                                        extractVerificationCode(plainText);
+                            
+                            const mailObj = {
+                                seqno: seqno,
+                                subject: parsed.subject || '(Без темы)',
+                                from: parsed.from?.text || 'Неизвестно',
+                                date: parsed.date || new Date(0),
+                                text: textContent,
+                                code: code
+                            };
+                            
+                            // Сохраняем все письма для отладки
+                            allMessages.push(mailObj);
+                            
+                            // Фильтруем письма от Cursor (более мягкий фильтр)
+                            const isCursorEmail = 
+                                fromAddress.includes('cursor') || 
+                                fromAddress.includes('no-reply') ||
                                 fromAddress.includes('noreply') ||
                                 subject.includes('cursor') ||
                                 subject.includes('verification') ||
+                                subject.includes('verify') ||
                                 subject.includes('code') ||
-                                subject.includes('confirm')) {
-                                
-                                const textContent = parsed.text || '';
-                                const htmlContent = parsed.html || '';
-                                
-                                // Убираем HTML теги для поиска кода
-                                const plainText = htmlContent
-                                    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-                                    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-                                    .replace(/<[^>]+>/g, ' ')
-                                    .replace(/&nbsp;/g, ' ')
-                                    .replace(/\s+/g, ' ');
-                                
-                                const code = extractVerificationCode(textContent) || 
-                                            extractVerificationCode(plainText);
-                                
-                                messages.push({
-                                    seqno: seqno,
-                                    subject: parsed.subject || '(Без темы)',
-                                    from: parsed.from?.text || 'Неизвестно',
-                                    date: parsed.date || new Date(0),
-                                    text: textContent,
-                                    code: code
-                                });
+                                subject.includes('confirm') ||
+                                subject.includes('подтвер');
+                            
+                            if (noFilter || isCursorEmail) {
+                                messages.push(mailObj);
                             }
                         } catch (parseErr) {
                             console.error('[MAIL] Parse error:', parseErr.message);
@@ -159,6 +173,13 @@ function fetchCursorEmails(email, password, limit = 10) {
                         pending--;
                         if (pending === 0 && fetchEnded) {
                             cleanup();
+                            // Логируем все письма при первой проверке
+                            if (logger && allMessages.length > 0) {
+                                logger(`[MAIL] 📋 Последние письма в ящике:`);
+                                allMessages.slice(0, 5).forEach((m, i) => {
+                                    logger(`[MAIL]   ${i + 1}. От: ${m.from.substring(0, 40)}, Тема: ${(m.subject || '').substring(0, 30)}`);
+                                });
+                            }
                             // Сортируем по дате (новые первыми)
                             messages.sort((a, b) => b.date - a.date);
                             resolve(messages);
@@ -226,9 +247,10 @@ async function waitForVerificationCode(email, password = null, afterDate = null,
     
     while (Date.now() - startTime < WAIT_TIMEOUT) {
         try {
-            const emails = await fetchCursorEmails(email, mailPassword, 20);
+            // Передаём logger только при первой проверке для вывода всех писем
+            const emails = await fetchCursorEmails(email, mailPassword, 20, firstCheck ? logger : null);
             
-            // При первой проверке выводим все найденные письма
+            // При первой проверке выводим отфильтрованные письма
             if (firstCheck) {
                 logger(`[MAIL] 📬 Найдено писем от Cursor/noreply: ${emails.length}`);
                 if (emails.length > 0) {
