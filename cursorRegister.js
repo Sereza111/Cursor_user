@@ -1,6 +1,7 @@
 /**
  * Модуль регистрации аккаунтов Cursor AI
  * Использует Puppeteer для автоматизации браузера
+ * Поддержка FlareSolverr для обхода Cloudflare
  */
 
 const puppeteer = require('puppeteer-extra');
@@ -10,6 +11,10 @@ const db = require('./database');
 
 // Подключаем stealth плагин для обхода обнаружения
 puppeteer.use(StealthPlugin());
+
+// FlareSolverr конфигурация
+const FLARESOLVERR_URL = process.env.FLARESOLVERR_URL || 'http://localhost:8191/v1';
+const FLARESOLVERR_ENABLED = process.env.FLARESOLVERR_ENABLED === 'true';
 
 // Конфигурация
 const CONFIG = {
@@ -30,6 +35,101 @@ class CursorRegister {
         this.currentProxyIndex = 0;
         this.browser = null;
         this.page = null;
+        this.flareSolverrCookies = null;
+        this.flareSolverrUserAgent = null;
+    }
+
+    /**
+     * Получение куки через FlareSolverr для обхода Cloudflare
+     * @param {string} url - URL для получения куки
+     * @param {string} proxy - прокси сервер (опционально)
+     * @returns {Object|null} - куки и user-agent или null при ошибке
+     */
+    async getFlareSolverrSession(url, proxy = null) {
+        if (!FLARESOLVERR_ENABLED) {
+            this.log('info', 'FlareSolverr отключён, пропускаем...');
+            return null;
+        }
+
+        this.log('info', `🌐 FlareSolverr: Получение сессии для ${url}...`);
+
+        try {
+            const requestBody = {
+                cmd: 'request.get',
+                url: url,
+                maxTimeout: 60000
+            };
+
+            // Добавляем прокси если есть
+            if (proxy) {
+                requestBody.proxy = {
+                    url: proxy
+                };
+            }
+
+            const response = await fetch(FLARESOLVERR_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(requestBody)
+            });
+
+            if (!response.ok) {
+                throw new Error(`FlareSolverr HTTP error: ${response.status}`);
+            }
+
+            const data = await response.json();
+
+            if (data.status === 'ok' && data.solution) {
+                this.log('info', `✅ FlareSolverr: Получены куки (${data.solution.cookies?.length || 0} шт.)`);
+                
+                this.flareSolverrCookies = data.solution.cookies || [];
+                this.flareSolverrUserAgent = data.solution.userAgent;
+
+                return {
+                    cookies: data.solution.cookies,
+                    userAgent: data.solution.userAgent,
+                    response: data.solution.response
+                };
+            } else {
+                this.log('warning', `⚠️ FlareSolverr: Не удалось получить сессию - ${data.message || 'Unknown error'}`);
+                return null;
+            }
+        } catch (error) {
+            this.log('error', `❌ FlareSolverr ошибка: ${error.message}`);
+            return null;
+        }
+    }
+
+    /**
+     * Применение куки FlareSolverr к странице Puppeteer
+     */
+    async applyFlareSolverrCookies() {
+        if (!this.flareSolverrCookies || this.flareSolverrCookies.length === 0) {
+            return false;
+        }
+
+        try {
+            // Преобразуем куки в формат Puppeteer
+            const puppeteerCookies = this.flareSolverrCookies.map(cookie => ({
+                name: cookie.name,
+                value: cookie.value,
+                domain: cookie.domain,
+                path: cookie.path || '/',
+                expires: cookie.expiry ? cookie.expiry : -1,
+                httpOnly: cookie.httpOnly || false,
+                secure: cookie.secure || false,
+                sameSite: cookie.sameSite || 'Lax'
+            }));
+
+            await this.page.setCookie(...puppeteerCookies);
+            this.log('info', `🍪 Применено ${puppeteerCookies.length} куки от FlareSolverr`);
+            return true;
+        } catch (error) {
+            this.log('error', `Ошибка применения куки: ${error.message}`);
+            return false;
+        }
     }
 
     /**
@@ -305,10 +405,39 @@ class CursorRegister {
         this.log('info', `Начинаем регистрацию: ${email} (${fullName})`);
 
         try {
-            // Запускаем браузер
+            // ==========================================
+            // ЭТАП 1: FlareSolverr (если включён)
+            // ==========================================
+            if (FLARESOLVERR_ENABLED) {
+                this.log('info', '🚀 Используем FlareSolverr для обхода Cloudflare...');
+                const flareSession = await this.getFlareSolverrSession(CONFIG.SIGNUP_URL, proxy);
+                
+                if (flareSession) {
+                    this.log('info', '✅ FlareSolverr успешно получил сессию');
+                } else {
+                    this.log('warning', '⚠️ FlareSolverr не смог получить сессию, продолжаем без него...');
+                }
+            }
+
+            // ==========================================
+            // ЭТАП 2: Запуск браузера
+            // ==========================================
             await this.launchBrowser(proxy);
 
-            // Переходим на страницу регистрации
+            // Применяем User-Agent от FlareSolverr (если есть)
+            if (this.flareSolverrUserAgent) {
+                await this.page.setUserAgent(this.flareSolverrUserAgent);
+                this.log('info', '🔄 Применён User-Agent от FlareSolverr');
+            }
+
+            // Применяем куки от FlareSolverr (если есть)
+            if (this.flareSolverrCookies && this.flareSolverrCookies.length > 0) {
+                await this.applyFlareSolverrCookies();
+            }
+
+            // ==========================================
+            // ЭТАП 3: Переход на страницу регистрации
+            // ==========================================
             this.log('info', 'Переход на страницу регистрации...');
             await this.page.goto(CONFIG.SIGNUP_URL, { 
                 waitUntil: 'networkidle2',
@@ -317,10 +446,12 @@ class CursorRegister {
 
             await this.humanDelay(1000, 2000);
 
-            // СНАЧАЛА проверяем страницу Cloudflare Turnstile
+            // ==========================================
+            // ЭТАП 4: Проверка Cloudflare Turnstile
+            // ==========================================
             const captchaSolved = await this.waitForTurnstile();
             if (!captchaSolved) {
-                throw new Error('❌ Cloudflare Turnstile не решена. Попробуйте использовать резидентные прокси или сервис решения капчи.');
+                throw new Error('❌ Cloudflare Turnstile не решена. Попробуйте: 1) Включить FlareSolverr 2) Использовать резидентные прокси 3) Использовать сервис решения капчи');
             }
             
             // После решения капчи ждём загрузки страницы регистрации
@@ -525,9 +656,39 @@ class CursorRegister {
         this.log('info', `Попытка входа: ${email}`);
 
         try {
+            // ==========================================
+            // ЭТАП 1: FlareSolverr (если включён)
+            // ==========================================
+            if (FLARESOLVERR_ENABLED) {
+                this.log('info', '🚀 Используем FlareSolverr для обхода Cloudflare...');
+                const flareSession = await this.getFlareSolverrSession(CONFIG.LOGIN_URL, proxy);
+                
+                if (flareSession) {
+                    this.log('info', '✅ FlareSolverr успешно получил сессию');
+                } else {
+                    this.log('warning', '⚠️ FlareSolverr не смог получить сессию, продолжаем без него...');
+                }
+            }
+
+            // ==========================================
+            // ЭТАП 2: Запуск браузера
+            // ==========================================
             await this.launchBrowser(proxy);
 
-            // Переходим на страницу входа
+            // Применяем User-Agent от FlareSolverr (если есть)
+            if (this.flareSolverrUserAgent) {
+                await this.page.setUserAgent(this.flareSolverrUserAgent);
+                this.log('info', '🔄 Применён User-Agent от FlareSolverr');
+            }
+
+            // Применяем куки от FlareSolverr (если есть)
+            if (this.flareSolverrCookies && this.flareSolverrCookies.length > 0) {
+                await this.applyFlareSolverrCookies();
+            }
+
+            // ==========================================
+            // ЭТАП 3: Переход на страницу входа
+            // ==========================================
             await this.page.goto(CONFIG.LOGIN_URL, { 
                 waitUntil: 'networkidle2',
                 timeout: CONFIG.TIMEOUT 
@@ -535,10 +696,12 @@ class CursorRegister {
 
             await this.humanDelay(1000, 2000);
 
-            // СНАЧАЛА проверяем страницу Cloudflare Turnstile
+            // ==========================================
+            // ЭТАП 4: Проверка Cloudflare Turnstile
+            // ==========================================
             const captchaSolved = await this.waitForTurnstile();
             if (!captchaSolved) {
-                throw new Error('❌ Cloudflare Turnstile не решена. Попробуйте использовать резидентные прокси.');
+                throw new Error('❌ Cloudflare Turnstile не решена. Попробуйте: 1) Включить FlareSolverr 2) Использовать резидентные прокси');
             }
             
             await this.humanDelay(2000, 3000);

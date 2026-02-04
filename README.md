@@ -332,6 +332,102 @@ rm db.sqlite
 node app.js  # Создаст новую БД
 ```
 
+## 🛡️ FlareSolverr - Обход Cloudflare
+
+Если вы сталкиваетесь с Cloudflare Turnstile CAPTCHA, используйте **FlareSolverr** для обхода защиты.
+
+### Установка FlareSolverr
+
+#### Вариант 1: Docker (рекомендуется)
+
+```bash
+# Запуск FlareSolverr в Docker
+docker run -d \
+  --name=flaresolverr \
+  -p 8191:8191 \
+  -e LOG_LEVEL=info \
+  --restart unless-stopped \
+  ghcr.io/flaresolverr/flaresolverr:latest
+```
+
+#### Вариант 2: Docker Compose
+
+Добавьте в ваш `docker-compose.yml`:
+
+```yaml
+version: '3.8'
+
+services:
+  cursor-register:
+    build: .
+    container_name: cursor-panel
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - SESSION_SECRET=${SESSION_SECRET}
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - HEADLESS=true
+      - FLARESOLVERR_ENABLED=true
+      - FLARESOLVERR_URL=http://flaresolverr:8191/v1
+    volumes:
+      - ./db.sqlite:/app/db.sqlite
+      - ./exports:/app/exports
+    depends_on:
+      - flaresolverr
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    restart: unless-stopped
+    environment:
+      - LOG_LEVEL=info
+      - LOG_HTML=false
+      - CAPTCHA_SOLVER=none
+      - TZ=Europe/Moscow
+    ports:
+      - "8191:8191"
+```
+
+```bash
+# Запуск
+docker-compose up -d
+
+# Проверка статуса FlareSolverr
+curl http://localhost:8191/v1 -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"cmd": "sessions.list"}'
+```
+
+### Настройка в .env
+
+```env
+# Включить FlareSolverr
+FLARESOLVERR_ENABLED=true
+
+# URL сервера FlareSolverr
+# Локально: http://localhost:8191/v1
+# Docker: http://flaresolverr:8191/v1
+# Удалённо: http://YOUR_SERVER_IP:8191/v1
+FLARESOLVERR_URL=http://localhost:8191/v1
+```
+
+### Как это работает
+
+1. **FlareSolverr** получает запрос на URL страницы регистрации
+2. Использует **undetectable browser** для прохождения Cloudflare
+3. Возвращает **куки сессии** и **User-Agent**
+4. Puppeteer использует эти куки для доступа к странице
+5. Cloudflare видит "легитимную" сессию и пропускает
+
+### Ограничения
+
+- FlareSolverr решает **Cloudflare JS Challenge**, но не **Turnstile виджет** внутри формы
+- Для Turnstile внутри формы нужен платный сервис (2Captcha, CapSolver)
+- Рекомендуется использовать **резидентные прокси** для лучших результатов
+
 ## 📄 Лицензия
 
 MIT License - свободное использование.
