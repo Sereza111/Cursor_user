@@ -13,7 +13,13 @@ const mailReader = require('./mailReader');
 // Подключаем stealth плагин для обхода обнаружения
 puppeteer.use(StealthPlugin());
 
-// Настройки проверки почты
+// Настройки проверки почты (читаем при каждом обращении для возможности динамического изменения)
+const getMailConfig = () => ({
+    enabled: process.env.MAIL_VERIFICATION_ENABLED === 'true',
+    password: process.env.MAIL_PASSWORD || ''
+});
+
+// Для совместимости
 const MAIL_VERIFICATION_ENABLED = process.env.MAIL_VERIFICATION_ENABLED === 'true';
 const MAIL_PASSWORD = process.env.MAIL_PASSWORD || '';
 
@@ -600,7 +606,12 @@ class CursorRegister {
                 // ==========================================
                 // ЭТАП 5: Автоматическое получение кода из почты
                 // ==========================================
-                if (MAIL_VERIFICATION_ENABLED && MAIL_PASSWORD) {
+                // Получаем актуальные настройки почты
+                const mailConfig = getMailConfig();
+                this.log('info', `📧 Настройки почты: enabled=${mailConfig.enabled}, password=${mailConfig.password ? '***' : 'НЕ ЗАДАН'}`);
+                this.log('info', `📧 ENV: MAIL_VERIFICATION_ENABLED=${process.env.MAIL_VERIFICATION_ENABLED}, MAIL_PASSWORD=${process.env.MAIL_PASSWORD ? 'есть' : 'нет'}`);
+                
+                if (mailConfig.enabled && mailConfig.password) {
                     this.log('info', '📧 Запуск автоматической проверки почты...');
                     
                     const verificationSuccess = await this.waitAndEnterVerificationCode(email, new Date(startTime));
@@ -823,8 +834,12 @@ class CursorRegister {
      * @returns {boolean} - Успешно ли введён код
      */
     async waitAndEnterVerificationCode(email, registrationTime) {
-        if (!MAIL_VERIFICATION_ENABLED || !MAIL_PASSWORD) {
+        // Получаем актуальные настройки почты
+        const mailConfig = getMailConfig();
+        
+        if (!mailConfig.enabled || !mailConfig.password) {
             this.log('info', '📧 Автоматическая проверка почты отключена');
+            this.log('info', `📧 DEBUG: enabled=${mailConfig.enabled}, password=${mailConfig.password ? 'есть' : 'нет'}`);
             return false;
         }
 
@@ -834,7 +849,7 @@ class CursorRegister {
             // Ждём код из почты
             const code = await mailReader.waitForVerificationCode(
                 email, 
-                MAIL_PASSWORD, 
+                mailConfig.password, 
                 registrationTime,
                 (msg) => this.log('info', msg)
             );
