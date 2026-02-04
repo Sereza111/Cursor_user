@@ -35,12 +35,14 @@
                     <div class="form-group">
                         <label class="form-label">Список аккаунтов</label>
                         <textarea 
-                            id="accountsInput" 
+                            id="accountsList" 
                             class="form-control" 
                             placeholder="Введите аккаунты в формате email:password&#10;Каждый аккаунт с новой строки&#10;&#10;Пример:&#10;user1@example.com:password123&#10;user2@example.com:securepass456"
                             rows="8"
                         ></textarea>
                         <small class="text-muted">Формат: email:password (один аккаунт на строку)</small>
+                        <!-- Скрытое поле для прокси (опционально) -->
+                        <textarea id="proxyList" style="display:none;"></textarea>
                     </div>
 
                     <div class="mode-select">
