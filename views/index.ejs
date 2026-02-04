@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>⚜ Cursor Mass Register</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <!-- Navbar -->
+    <nav class="navbar">
+        <a href="/" class="navbar-brand">
+            ⚜ CURSOR REGISTER
+        </a>
+        <div class="navbar-nav">
+            <a href="/" class="nav-link">Главная</a>
+            <a href="/sessions" class="nav-link">История</a>
+            <a href="/logout" class="nav-link">Выход</a>
+        </div>
+    </nav>
+
+    <div class="container">
+        <!-- Header -->
+        <div class="main-card">
+            <div class="header">
+                <h1>⚜ МАССОВАЯ РЕГИСТРАЦИЯ ⚜</h1>
+                <p class="subtitle">Автоматизация создания аккаунтов Cursor AI</p>
+            </div>
+
+            <div class="divider"></div>
+
+            <!-- Форма ввода -->
+            <div class="input-section">
+                <form id="registerForm">
+                    <div class="form-group">
+                        <label class="form-label">Список аккаунтов</label>
+                        <textarea 
+                            id="accountsInput" 
+                            class="form-control" 
+                            placeholder="Введите аккаунты в формате email:password&#10;Каждый аккаунт с новой строки&#10;&#10;Пример:&#10;user1@example.com:password123&#10;user2@example.com:securepass456"
+                            rows="8"
+                        ></textarea>
+                        <small class="text-muted">Формат: email:password (один аккаунт на строку)</small>
+                    </div>
+
+                    <div class="mode-select">
+                        <label class="mode-option active" data-mode="register">
+                            <input type="radio" name="mode" value="register" checked>
+                            <span class="mode-icon">📝</span>
+                            <span class="mode-title">Регистрация</span>
+                        </label>
+                        <label class="mode-option" data-mode="login">
+                            <input type="radio" name="mode" value="login">
+                            <span class="mode-icon">🔑</span>
+                            <span class="mode-title">Вход + Проверка Trial</span>
+                        </label>
+                    </div>
+
+                    <div class="ornament">✠ ✠ ✠</div>
+
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-success btn-lg" id="startBtn" style="flex: 2;">
+                            ⚔ Запустить обработку
+                        </button>
+                        <button type="button" class="btn btn-danger btn-lg" id="stopBtn" style="flex: 1;" disabled>
+                            ✕ Остановить
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Статистика -->
+            <div class="stats" id="statsSection" style="display: none;">
+                <div class="stat-item">
+                    <span class="stat-number" id="statTotal">0</span>
+                    <span class="stat-label">Всего</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-number" id="statProcessed">0</span>
+                    <span class="stat-label">Обработано</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-number" id="statSuccess">0</span>
+                    <span class="stat-label">Успешно</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-number" id="statFailed">0</span>
+                    <span class="stat-label">Ошибок</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-number" id="statTrial">0</span>
+                    <span class="stat-label">С Trial</span>
+                </div>
+            </div>
+
+            <!-- Прогресс бар -->
+            <div class="progress-container" id="progressSection" style="display: none;">
+                <div class="progress-info">
+                    <span id="progressText">Обработка...</span>
+                    <span id="progressPercent">0%</span>
+                </div>
+                <div class="progress-bar-wrapper">
+                    <div class="progress-bar" id="progressBar"></div>
+                </div>
+            </div>
+
+            <!-- Таблица результатов -->
+            <div id="resultsSection" style="display: none;">
+                <h3 class="mb-2">📜 Результаты обработки</h3>
+                <div class="table-container">
+                    <table class="gothic-table">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Email</th>
+                                <th>Имя</th>
+                                <th>Статус</th>
+                                <th>Trial</th>
+                                <th>Ошибка</th>
+                            </tr>
+                        </thead>
+                        <tbody id="resultsTable">
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="d-flex gap-2 mt-2">
+                    <button class="btn btn-primary" id="exportCsvBtn">
+                        📄 Экспорт CSV
+                    </button>
+                    <button class="btn btn-primary" id="exportTxtBtn">
+                        📝 Экспорт TXT
+                    </button>
+                    <button class="btn btn-primary" id="exportSuccessBtn">
+                        ✓ Только успешные
+                    </button>
+                </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <!-- Логи -->
+            <div>
+                <h3 class="mb-2">📋 Журнал операций</h3>
+                <div class="log-container" id="logContainer">
+                    <div class="log-entry">
+                        <span class="log-time">--:--:--</span>
+                        <span class="log-level info">ℹ️</span>
+                        <span class="log-message">Готов к работе. Введите аккаунты и нажмите "Запустить".</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="text-center text-muted" style="padding: 20px;">
+            <p class="ornament">⚜ ⚜ ⚜</p>
+            <p>Cursor Mass Register Panel v1.0</p>
+        </div>
+    </div>
+
+    <script src="/js/main.js"></script>
+</body>
+</html>

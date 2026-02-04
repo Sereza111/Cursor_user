@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>⚜ Cursor Register - Вход</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-card fade-in">
+            <div class="login-header">
+                <h1>⚜ CURSOR ⚜</h1>
+                <p class="subtitle">Mass Register Panel</p>
+            </div>
+
+            <div class="divider"></div>
+
+            <% if (error) { %>
+                <div class="alert alert-danger">
+                    ✕ <%= error %>
+                </div>
+            <% } %>
+
+            <form action="/login" method="POST">
+                <div class="form-group">
+                    <label class="form-label">Имя пользователя</label>
+                    <input type="text" name="username" class="form-control" placeholder="Введите логин..." required autofocus>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Пароль</label>
+                    <input type="password" name="password" class="form-control" placeholder="Введите пароль..." required>
+                </div>
+
+                <div class="ornament">✠ ✠ ✠</div>
+
+                <button type="submit" class="btn btn-primary btn-block btn-lg">
+                    ⚔ Войти
+                </button>
+            </form>
+
+            <div class="divider"></div>
+
+            <p class="text-center text-muted" style="font-size: 0.85rem;">
+                Панель массовой регистрации аккаунтов Cursor AI
+            </p>
+        </div>
+    </div>
+</body>
+</html>

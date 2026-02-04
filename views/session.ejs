@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>⚜ Сессия #<%= session.id %></title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <!-- Navbar -->
+    <nav class="navbar">
+        <a href="/" class="navbar-brand">
+            ⚜ CURSOR REGISTER
+        </a>
+        <div class="navbar-nav">
+            <a href="/" class="nav-link">Главная</a>
+            <a href="/sessions" class="nav-link">История</a>
+            <a href="/logout" class="nav-link">Выход</a>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="main-card">
+            <!-- Session Header -->
+            <div class="session-header">
+                <div>
+                    <h1>📜 Сессия #<%= session.id %></h1>
+                    <p class="subtitle">Детальная информация о сессии</p>
+                </div>
+                <a href="/sessions" class="btn btn-primary">
+                    ← Назад к списку
+                </a>
+            </div>
+
+            <div class="divider"></div>
+
+            <!-- Session Info -->
+            <div class="session-info mb-3">
+                <div class="session-info-item">
+                    <span class="session-info-label">Режим</span>
+                    <span class="session-info-value">
+                        <%= session.mode === 'register' ? '📝 Регистрация' : '🔑 Вход' %>
+                    </span>
+                </div>
+                <div class="session-info-item">
+                    <span class="session-info-label">Статус</span>
+                    <span class="session-info-value">
+                        <% if (session.status === 'completed') { %>
+                            <span class="status-badge status-success">Завершена</span>
+                        <% } else if (session.status === 'running') { %>
+                            <span class="status-badge status-processing">В процессе</span>
+                        <% } else { %>
+                            <span class="status-badge status-pending"><%= session.status %></span>
+                        <% } %>
+                    </span>
+                </div>
+                <div class="session-info-item">
+                    <span class="session-info-label">Дата создания</span>
+                    <span class="session-info-value"><%= new Date(session.created_at).toLocaleString('ru-RU') %></span>
+                </div>
+            </div>
+
+            <!-- Stats -->
+            <div class="stats">
+                <div class="stat-item">
+                    <span class="stat-number"><%= session.total_accounts %></span>
+                    <span class="stat-label">Всего</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-number"><%= session.processed_accounts %></span>
+                    <span class="stat-label">Обработано</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-number text-success"><%= session.success_count %></span>
+                    <span class="stat-label">Успешно</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-number text-danger"><%= session.failed_count %></span>
+                    <span class="stat-label">Ошибок</span>
+                </div>
+            </div>
+
+            <div class="ornament">✠ ✠ ✠</div>
+
+            <!-- Accounts Table -->
+            <h3 class="mb-2">📋 Аккаунты сессии</h3>
+            <div class="table-container">
+                <table class="gothic-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Email</th>
+                            <th>Имя</th>
+                            <th>Статус</th>
+                            <th>Trial</th>
+                            <th>Прокси</th>
+                            <th>Ошибка</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <% accounts.forEach((acc, index) => { %>
+                            <tr class="slide-in" style="animation-delay: <%= index * 0.05 %>s">
+                                <td><%= index + 1 %></td>
+                                <td><%= acc.email %></td>
+                                <td><%= acc.full_name || '-' %></td>
+                                <td>
+                                    <% if (acc.status === 'success') { %>
+                                        <span class="status-badge status-success">✓ Успех</span>
+                                    <% } else if (acc.status === 'failed') { %>
+                                        <span class="status-badge status-failed">✕ Ошибка</span>
+                                    <% } else if (acc.status === 'processing') { %>
+                                        <span class="status-badge status-processing">⟳ Обработка</span>
+                                    <% } else { %>
+                                        <span class="status-badge status-pending">◌ Ожидание</span>
+                                    <% } %>
+                                </td>
+                                <td>
+                                    <% if (acc.trial_status === 'active') { %>
+                                        <span class="text-success">✓ <%= acc.trial_days || 7 %> дней</span>
+                                    <% } else if (acc.trial_status === 'pending_verification') { %>
+                                        <span class="text-muted">⧗ Верификация</span>
+                                    <% } else if (acc.trial_status === 'none') { %>
+                                        <span class="text-muted">—</span>
+                                    <% } else { %>
+                                        <span class="text-muted">?</span>
+                                    <% } %>
+                                </td>
+                                <td><%= acc.proxy_used || 'direct' %></td>
+                                <td class="text-danger" style="max-width: 200px; overflow: hidden; text-overflow: ellipsis;">
+                                    <%= acc.error_message || '-' %>
+                                </td>
+                            </tr>
+                        <% }) %>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Export buttons -->
+            <div class="d-flex gap-2 mt-2">
+                <a href="/api/sessions/<%= session.id %>/export?format=csv" class="btn btn-primary">
+                    📄 Экспорт CSV
+                </a>
+                <a href="/api/sessions/<%= session.id %>/export?format=txt" class="btn btn-primary">
+                    📝 Экспорт TXT
+                </a>
+                <a href="/api/sessions/<%= session.id %>/export?format=csv&filter=success" class="btn btn-success">
+                    ✓ Только успешные
+                </a>
+            </div>
+
+            <div class="divider"></div>
+
+            <!-- Logs -->
+            <h3 class="mb-2">📋 Логи сессии</h3>
+            <div class="log-container">
+                <% logs.forEach(log => { %>
+                    <div class="log-entry">
+                        <span class="log-time"><%= new Date(log.created_at).toLocaleTimeString('ru-RU') %></span>
+                        <span class="log-level <%= log.level %>">
+                            <% if (log.level === 'info') { %>ℹ️<% } %>
+                            <% if (log.level === 'warning') { %>⚠️<% } %>
+                            <% if (log.level === 'error') { %>❌<% } %>
+                            <% if (log.level === 'success') { %>✅<% } %>
+                        </span>
+                        <span class="log-message"><%= log.message %></span>
+                    </div>
+                <% }) %>
+                <% if (logs.length === 0) { %>
+                    <div class="log-entry">
+                        <span class="log-message text-muted">Нет записей в логе</span>
+                    </div>
+                <% } %>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="text-center text-muted" style="padding: 20px;">
+            <p class="ornament">⚜ ⚜ ⚜</p>
+            <p>Cursor Mass Register Panel v1.0</p>
+        </div>
+    </div>
+</body>
+</html>
