@@ -667,13 +667,62 @@ class CursorRegister {
             }
             
             // После решения капчи ждём загрузки страницы регистрации
-            await this.humanDelay(2000, 3000);
+            this.log('info', '⏳ Ожидаем загрузку формы регистрации...');
+            await this.humanDelay(3000, 5000);
+            
+            // ==========================================
+            // ВАЖНО: Ждём появления формы регистрации
+            // ==========================================
+            const formSelectors = [
+                'input[name="firstName"]',
+                'input[name="first_name"]',
+                'input[placeholder*="first" i]',
+                'input[type="email"]',
+                'input[name="email"]'
+            ];
+            
+            let formLoaded = false;
+            for (let attempt = 0; attempt < 10; attempt++) {
+                for (const selector of formSelectors) {
+                    const field = await this.page.$(selector);
+                    if (field) {
+                        this.log('info', `✅ Форма загружена! Найден элемент: ${selector}`);
+                        formLoaded = true;
+                        break;
+                    }
+                }
+                
+                if (formLoaded) break;
+                
+                this.log('info', `⏳ Попытка ${attempt + 1}/10: форма ещё не загружена, ждём...`);
+                await this.humanDelay(2000, 3000);
+                
+                // Проверяем, не вернулась ли капча
+                const stillHasCaptcha = await this.hasTurnstileCaptcha();
+                if (stillHasCaptcha) {
+                    this.log('warning', '⚠️ Капча снова появилась!');
+                    const captchaAgain = await this.waitForTurnstile();
+                    if (!captchaAgain) {
+                        throw new Error('Повторная капча не решена');
+                    }
+                }
+            }
 
             // Делаем скриншот для отладки
             await this.page.screenshot({ 
                 path: `debug_signup_${accountId}.png`,
                 fullPage: true 
             });
+            
+            // Логируем текущий URL и часть HTML для отладки
+            const currentSignupUrl = this.page.url();
+            this.log('info', `📍 Текущий URL: ${currentSignupUrl}`);
+            
+            const pageHtmlSnippet = await this.page.evaluate(() => {
+                const inputs = document.querySelectorAll('input');
+                return Array.from(inputs).map(i => `${i.name || i.type || 'unknown'}[${i.placeholder || ''}]`).join(', ');
+            });
+            this.log('info', `📋 Найденные поля ввода: ${pageHtmlSnippet || 'нет'}`);
 
             // ==========================================
             // Cursor форма регистрации:
@@ -682,10 +731,10 @@ class CursorRegister {
             // ТРЕТЬЯ СТРАНИЦА: Verification email sent
             // ==========================================
             
-            // Проверяем наличие полей на первой странице
-            const firstNameInput = await this.page.$('input[name="firstName"], input[placeholder*="first" i], input[name="first_name"]');
-            const lastNameInput = await this.page.$('input[name="lastName"], input[placeholder*="last" i], input[name="last_name"]');
-            const emailInput = await this.page.$('input[type="email"], input[name="email"], input[placeholder*="email" i]');
+            // Проверяем наличие полей на первой странице (расширенные селекторы)
+            const firstNameInput = await this.page.$('input[name="firstName"], input[name="first_name"], input[placeholder*="first" i], input[data-testid*="first" i]');
+            const lastNameInput = await this.page.$('input[name="lastName"], input[name="last_name"], input[placeholder*="last" i], input[data-testid*="last" i]');
+            const emailInput = await this.page.$('input[type="email"], input[name="email"], input[placeholder*="email" i], input[data-testid*="email" i]');
             
             this.log('info', `🔍 Поиск полей: firstName=${!!firstNameInput}, lastName=${!!lastNameInput}, email=${!!emailInput}`);
 
