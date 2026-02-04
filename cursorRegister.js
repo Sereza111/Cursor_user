@@ -165,11 +165,75 @@ class CursorRegister {
     }
 
     /**
+     * Парсинг прокси строки с поддержкой авторизации
+     * Поддерживаемые форматы:
+     * - host:port
+     * - host:port@user:pass
+     * - user:pass@host:port
+     * - http://user:pass@host:port
+     */
+    parseProxy(proxyString) {
+        if (!proxyString) return null;
+        
+        let host, port, username, password;
+        
+        // Убираем протокол если есть
+        let proxy = proxyString.replace(/^https?:\/\//, '');
+        
+        // Формат: host:port@user:pass
+        if (proxy.includes('@')) {
+            const atIndex = proxy.indexOf('@');
+            const beforeAt = proxy.substring(0, atIndex);
+            const afterAt = proxy.substring(atIndex + 1);
+            
+            // Определяем где host:port, а где user:pass
+            // Если beforeAt содержит точку - это скорее всего host
+            if (beforeAt.includes('.') || beforeAt.includes(':') && beforeAt.split(':')[0].match(/^\d+$/)) {
+                // Формат: host:port@user:pass
+                const hostParts = beforeAt.split(':');
+                host = hostParts[0];
+                port = hostParts[1];
+                const authParts = afterAt.split(':');
+                username = authParts[0];
+                password = authParts.slice(1).join(':'); // Пароль может содержать :
+            } else {
+                // Формат: user:pass@host:port
+                const authParts = beforeAt.split(':');
+                username = authParts[0];
+                password = authParts.slice(1).join(':');
+                const hostParts = afterAt.split(':');
+                host = hostParts[0];
+                port = hostParts[1];
+            }
+        } else {
+            // Формат: host:port (без авторизации)
+            const parts = proxy.split(':');
+            host = parts[0];
+            port = parts[1];
+        }
+        
+        return {
+            host,
+            port,
+            username,
+            password,
+            hasAuth: !!(username && password),
+            // URL для --proxy-server (без авторизации)
+            serverUrl: `${host}:${port}`,
+            // Полный URL
+            fullUrl: username ? `http://${username}:${password}@${host}:${port}` : `http://${host}:${port}`
+        };
+    }
+
+    /**
      * Запуск браузера
      */
     async launchBrowser(proxy = null) {
         const viewport = generateViewport();
         const userAgent = generateUserAgent();
+        
+        // Парсим прокси
+        const proxyConfig = this.parseProxy(proxy);
 
         const launchOptions = {
             headless: CONFIG.HEADLESS ? 'new' : false,
@@ -189,13 +253,22 @@ class CursorRegister {
         };
 
         // Добавляем прокси если есть
-        if (proxy) {
-            launchOptions.args.push(`--proxy-server=${proxy}`);
-            this.log('info', `Используем прокси: ${proxy}`);
+        if (proxyConfig) {
+            launchOptions.args.push(`--proxy-server=${proxyConfig.serverUrl}`);
+            this.log('info', `🌐 Используем прокси: ${proxyConfig.serverUrl}${proxyConfig.hasAuth ? ' (с авторизацией)' : ''}`);
         }
 
         this.browser = await puppeteer.launch(launchOptions);
         this.page = await this.browser.newPage();
+        
+        // Если прокси требует авторизации - устанавливаем credentials
+        if (proxyConfig && proxyConfig.hasAuth) {
+            await this.page.authenticate({
+                username: proxyConfig.username,
+                password: proxyConfig.password
+            });
+            this.log('info', `🔐 Прокси авторизация установлена: ${proxyConfig.username}`);
+        }
 
         // Устанавливаем User-Agent
         await this.page.setUserAgent(userAgent);
