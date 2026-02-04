@@ -211,36 +211,76 @@ class CursorRegister {
      */
     async waitForTurnstile() {
         try {
-            // Ждём появления Turnstile
-            const turnstileFrame = await this.page.$('iframe[src*="challenges.cloudflare.com"]');
-            if (!turnstileFrame) {
+            // Проверяем наличие страницы верификации Cloudflare
+            const pageText = await this.page.evaluate(() => document.body.innerText);
+            const hasTurnstilePage = pageText.includes('Verify you are human') || 
+                                     pageText.includes('needs to review the security');
+            
+            if (!hasTurnstilePage) {
                 return true; // Нет капчи - успех
             }
 
-            this.log('info', 'Ожидание решения Cloudflare Turnstile...');
+            this.log('info', '🔒 Обнаружена Cloudflare Turnstile, пытаемся решить...');
             
-            // Ждём до 30 секунд пока капча решится автоматически (иногда stealth помогает)
-            for (let i = 0; i < 30; i++) {
-                await this.humanDelay(1000, 1000);
+            // Ждём загрузки iframe с капчей
+            await this.humanDelay(2000, 3000);
+            
+            // Пробуем найти и кликнуть на чекбокс внутри iframe
+            for (let attempt = 0; attempt < 5; attempt++) {
+                try {
+                    // Ищем iframe Turnstile
+                    const frames = this.page.frames();
+                    for (const frame of frames) {
+                        const url = frame.url();
+                        if (url.includes('challenges.cloudflare.com') || url.includes('turnstile')) {
+                            this.log('info', `Попытка ${attempt + 1}: Нашли iframe Turnstile`);
+                            
+                            // Пробуем кликнуть на чекбокс внутри iframe
+                            try {
+                                await frame.waitForSelector('input[type="checkbox"], .cb-i, #challenge-stage', { timeout: 5000 });
+                                await frame.click('input[type="checkbox"], .cb-i, #challenge-stage');
+                                this.log('info', 'Кликнули на чекбокс Turnstile');
+                            } catch (e) {
+                                // Пробуем кликнуть по координатам центра iframe
+                                const box = await frame.evaluate(() => {
+                                    const body = document.body;
+                                    return { width: body.clientWidth, height: body.clientHeight };
+                                });
+                                await this.page.mouse.click(box.width / 2, box.height / 2);
+                                this.log('info', 'Кликнули по центру iframe');
+                            }
+                            
+                            break;
+                        }
+                    }
+                } catch (e) {
+                    this.log('warning', `Попытка ${attempt + 1} не удалась: ${e.message}`);
+                }
                 
-                // Проверяем, исчезла ли капча или появился успех
-                const stillThere = await this.page.$('iframe[src*="challenges.cloudflare.com"]');
-                if (!stillThere) {
-                    this.log('info', 'Turnstile решена');
+                // Ждём и проверяем, решилась ли капча
+                await this.humanDelay(3000, 5000);
+                
+                // Проверяем, исчезла ли страница капчи
+                const currentText = await this.page.evaluate(() => document.body.innerText);
+                if (!currentText.includes('Verify you are human') && 
+                    !currentText.includes('needs to review the security')) {
+                    this.log('info', '✅ Turnstile решена!');
                     return true;
                 }
                 
-                // Проверяем, не произошла ли навигация
+                // Проверяем URL - может быть редирект
                 const currentUrl = this.page.url();
-                if (!currentUrl.includes('challenges.cloudflare.com')) {
+                if (currentUrl.includes('sign-up') && !currentUrl.includes('challenge')) {
+                    this.log('info', '✅ Прошли верификацию, на странице регистрации');
                     return true;
                 }
             }
 
-            this.log('error', 'Не удалось решить Turnstile за 30 секунд');
+            this.log('error', '❌ Не удалось решить Turnstile за 5 попыток');
+            this.log('info', '💡 Рекомендация: используйте сервис решения капчи (2captcha, anti-captcha) или резидентные прокси');
             return false;
         } catch (error) {
-            this.log('error', `Ошибка при ожидании Turnstile: ${error.message}`);
+            this.log('error', `Ошибка при решении Turnstile: ${error.message}`);
             return false;
         }
     }
@@ -277,14 +317,14 @@ class CursorRegister {
 
             await this.humanDelay(1000, 2000);
 
-            // Проверяем CAPTCHA
-            const hasCaptcha = await this.checkForCaptcha();
-            if (hasCaptcha) {
-                const captchaSolved = await this.waitForTurnstile();
-                if (!captchaSolved) {
-                    throw new Error('CAPTCHA не решена');
-                }
+            // СНАЧАЛА проверяем страницу Cloudflare Turnstile
+            const captchaSolved = await this.waitForTurnstile();
+            if (!captchaSolved) {
+                throw new Error('❌ Cloudflare Turnstile не решена. Попробуйте использовать резидентные прокси или сервис решения капчи.');
             }
+            
+            // После решения капчи ждём загрузки страницы регистрации
+            await this.humanDelay(2000, 3000);
 
             // Делаем скриншот для отладки
             await this.page.screenshot({ 
@@ -495,14 +535,13 @@ class CursorRegister {
 
             await this.humanDelay(1000, 2000);
 
-            // Проверяем CAPTCHA
-            const hasCaptcha = await this.checkForCaptcha();
-            if (hasCaptcha) {
-                const captchaSolved = await this.waitForTurnstile();
-                if (!captchaSolved) {
-                    throw new Error('CAPTCHA не решена');
-                }
+            // СНАЧАЛА проверяем страницу Cloudflare Turnstile
+            const captchaSolved = await this.waitForTurnstile();
+            if (!captchaSolved) {
+                throw new Error('❌ Cloudflare Turnstile не решена. Попробуйте использовать резидентные прокси.');
             }
+            
+            await this.humanDelay(2000, 3000);
 
             // Вводим email
             await this.humanType('input[type="email"], input[name="email"]', email);
