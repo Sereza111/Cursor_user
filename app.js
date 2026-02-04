@@ -27,6 +27,9 @@ const { generateFullName } = require('./nameGenerator');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Доверяем прокси (Nginx)
+app.set('trust proxy', 1);
+
 // База данных инициализируется асинхронно при запуске сервера
 
 // Хранилище активных сессий обработки
