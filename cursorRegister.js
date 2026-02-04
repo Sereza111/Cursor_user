@@ -25,6 +25,10 @@ const MAIL_VERIFICATION_ENABLED = process.env.MAIL_VERIFICATION_ENABLED === 'tru
 const FLARESOLVERR_URL = process.env.FLARESOLVERR_URL || 'http://localhost:8191/v1';
 const FLARESOLVERR_ENABLED = process.env.FLARESOLVERR_ENABLED === 'true';
 
+// Режим ожидания капчи (для ручного решения через VNC)
+const CAPTCHA_WAIT_MODE = process.env.CAPTCHA_WAIT_MODE === 'true';
+const CAPTCHA_WAIT_TIMEOUT = parseInt(process.env.CAPTCHA_WAIT_TIMEOUT) || 300; // 5 минут по умолчанию
+
 // Конфигурация
 const CONFIG = {
     CURSOR_URL: 'https://cursor.com',
@@ -368,20 +372,87 @@ class CursorRegister {
     }
 
     /**
+     * Проверка наличия Cloudflare Turnstile капчи
+     * @returns {boolean} - Есть ли капча на странице
+     */
+    async hasTurnstileCaptcha() {
+        try {
+            const pageText = await this.page.evaluate(() => document.body.innerText);
+            return pageText.includes('Verify you are human') || 
+                   pageText.includes('needs to review the security') ||
+                   pageText.includes('checking your browser') ||
+                   pageText.includes('Just a moment');
+        } catch {
+            return false;
+        }
+    }
+
+    /**
      * Ожидание и попытка решить Turnstile CAPTCHA
+     * Поддерживает режим CAPTCHA_WAIT_MODE для ручного решения через VNC
      */
     async waitForTurnstile() {
         try {
             // Проверяем наличие страницы верификации Cloudflare
-            const pageText = await this.page.evaluate(() => document.body.innerText);
-            const hasTurnstilePage = pageText.includes('Verify you are human') || 
-                                     pageText.includes('needs to review the security');
+            const hasCaptcha = await this.hasTurnstileCaptcha();
             
-            if (!hasTurnstilePage) {
+            if (!hasCaptcha) {
                 return true; // Нет капчи - успех
             }
 
-            this.log('info', '🔒 Обнаружена Cloudflare Turnstile, пытаемся решить...');
+            this.log('info', '🔒 Обнаружена Cloudflare Turnstile капча!');
+            
+            // Делаем скриншот капчи
+            await this.page.screenshot({ 
+                path: `captcha_detected_${Date.now()}.png`,
+                fullPage: true 
+            });
+            
+            // ==========================================
+            // Режим ручного решения через VNC
+            // ==========================================
+            if (CAPTCHA_WAIT_MODE) {
+                this.log('info', `⏳ CAPTCHA_WAIT_MODE включён - ожидаем ручное решение (таймаут: ${CAPTCHA_WAIT_TIMEOUT} сек)`);
+                this.log('info', '🖥️  Подключитесь через VNC и решите капчу вручную!');
+                this.log('info', '📍 VNC обычно на порту 5900 или 5901');
+                
+                const startWait = Date.now();
+                const maxWaitMs = CAPTCHA_WAIT_TIMEOUT * 1000;
+                
+                while (Date.now() - startWait < maxWaitMs) {
+                    // Проверяем каждые 3 секунды
+                    await this.humanDelay(3000, 3500);
+                    
+                    const stillHasCaptcha = await this.hasTurnstileCaptcha();
+                    const currentUrl = this.page.url();
+                    
+                    // Проверяем, решена ли капча
+                    if (!stillHasCaptcha) {
+                        this.log('info', '✅ Капча решена! Продолжаем...');
+                        await this.humanDelay(1000, 2000);
+                        return true;
+                    }
+                    
+                    // Проверяем редирект на страницу регистрации
+                    if (currentUrl.includes('sign-up') && !currentUrl.includes('challenge')) {
+                        this.log('info', '✅ Редирект на страницу регистрации - капча пройдена!');
+                        return true;
+                    }
+                    
+                    const elapsedSec = Math.floor((Date.now() - startWait) / 1000);
+                    if (elapsedSec % 15 === 0) { // Лог каждые 15 сек
+                        this.log('info', `⏳ Ожидаем решение капчи... ${elapsedSec}/${CAPTCHA_WAIT_TIMEOUT} сек`);
+                    }
+                }
+                
+                this.log('error', `❌ Таймаут ожидания ручного решения капчи (${CAPTCHA_WAIT_TIMEOUT} сек)`);
+                return false;
+            }
+            
+            // ==========================================
+            // Автоматическая попытка решить
+            // ==========================================
+            this.log('info', '🤖 Пытаемся решить Turnstile автоматически...');
             
             // Ждём загрузки iframe с капчей
             await this.humanDelay(2000, 3000);
@@ -400,15 +471,19 @@ class CursorRegister {
                             try {
                                 await frame.waitForSelector('input[type="checkbox"], .cb-i, #challenge-stage', { timeout: 5000 });
                                 await frame.click('input[type="checkbox"], .cb-i, #challenge-stage');
-                                this.log('info', 'Кликнули на чекбокс Turnstile');
+                                this.log('info', '✔️ Кликнули на чекбокс Turnstile');
                             } catch (e) {
                                 // Пробуем кликнуть по координатам центра iframe
-                                const box = await frame.evaluate(() => {
-                                    const body = document.body;
-                                    return { width: body.clientWidth, height: body.clientHeight };
-                                });
-                                await this.page.mouse.click(box.width / 2, box.height / 2);
-                                this.log('info', 'Кликнули по центру iframe');
+                                try {
+                                    const box = await frame.evaluate(() => {
+                                        const body = document.body;
+                                        return { width: body.clientWidth, height: body.clientHeight };
+                                    });
+                                    await this.page.mouse.click(box.width / 2, box.height / 2);
+                                    this.log('info', '✔️ Кликнули по центру iframe');
+                                } catch (e2) {
+                                    this.log('warning', `Не удалось кликнуть: ${e2.message}`);
+                                }
                             }
                             
                             break;
@@ -422,10 +497,9 @@ class CursorRegister {
                 await this.humanDelay(3000, 5000);
                 
                 // Проверяем, исчезла ли страница капчи
-                const currentText = await this.page.evaluate(() => document.body.innerText);
-                if (!currentText.includes('Verify you are human') && 
-                    !currentText.includes('needs to review the security')) {
-                    this.log('info', '✅ Turnstile решена!');
+                const stillHasCaptcha = await this.hasTurnstileCaptcha();
+                if (!stillHasCaptcha) {
+                    this.log('info', '✅ Turnstile решена автоматически!');
                     return true;
                 }
                 
@@ -437,8 +511,12 @@ class CursorRegister {
                 }
             }
 
-            this.log('error', '❌ Не удалось решить Turnstile за 5 попыток');
-            this.log('info', '💡 Рекомендация: используйте сервис решения капчи (2captcha, anti-captcha) или резидентные прокси');
+            this.log('error', '❌ Не удалось решить Turnstile автоматически за 5 попыток');
+            this.log('info', '💡 Рекомендации:');
+            this.log('info', '   1. Включите CAPTCHA_WAIT_MODE=true и HEADLESS=false');
+            this.log('info', '   2. Настройте VNC для доступа к браузеру');
+            this.log('info', '   3. Используйте резидентные прокси');
+            this.log('info', '   4. Используйте сервис решения капчи (2captcha, anti-captcha)');
             return false;
         } catch (error) {
             this.log('error', `Ошибка при решении Turnstile: ${error.message}`);
