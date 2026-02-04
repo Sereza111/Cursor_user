@@ -13,15 +13,13 @@ const mailReader = require('./mailReader');
 // Подключаем stealth плагин для обхода обнаружения
 puppeteer.use(StealthPlugin());
 
-// Настройки проверки почты (читаем при каждом обращении для возможности динамического изменения)
+// Настройки проверки почты
 const getMailConfig = () => ({
-    enabled: process.env.MAIL_VERIFICATION_ENABLED === 'true',
-    password: process.env.MAIL_PASSWORD || ''
+    enabled: process.env.MAIL_VERIFICATION_ENABLED === 'true'
 });
 
-// Для совместимости
+// Флаг включения автоматической проверки почты
 const MAIL_VERIFICATION_ENABLED = process.env.MAIL_VERIFICATION_ENABLED === 'true';
-const MAIL_PASSWORD = process.env.MAIL_PASSWORD || '';
 
 // FlareSolverr конфигурация
 const FLARESOLVERR_URL = process.env.FLARESOLVERR_URL || 'http://localhost:8191/v1';
@@ -608,13 +606,14 @@ class CursorRegister {
                 // ==========================================
                 // Получаем актуальные настройки почты
                 const mailConfig = getMailConfig();
-                this.log('info', `📧 Настройки почты: enabled=${mailConfig.enabled}, password=${mailConfig.password ? '***' : 'НЕ ЗАДАН'}`);
-                this.log('info', `📧 ENV: MAIL_VERIFICATION_ENABLED=${process.env.MAIL_VERIFICATION_ENABLED}, MAIL_PASSWORD=${process.env.MAIL_PASSWORD ? 'есть' : 'нет'}`);
+                this.log('info', `📧 Настройки почты: enabled=${mailConfig.enabled}`);
+                this.log('info', `📧 Пароль аккаунта: ${password ? 'есть (' + password.length + ' символов)' : 'НЕ ЗАДАН'}`);
                 
-                if (mailConfig.enabled && mailConfig.password) {
+                if (mailConfig.enabled && password) {
                     this.log('info', '📧 Запуск автоматической проверки почты...');
                     
-                    const verificationSuccess = await this.waitAndEnterVerificationCode(email, new Date(startTime));
+                    // Используем пароль от аккаунта (из строки email:password)
+                    const verificationSuccess = await this.waitAndEnterVerificationCode(email, password, new Date(startTime));
                     
                     if (verificationSuccess) {
                         // Проверяем trial статус после верификации
@@ -830,26 +829,31 @@ class CursorRegister {
     /**
      * Ожидание письма и ввод кода верификации
      * @param {string} email - Email для проверки почты
+     * @param {string} mailPassword - Пароль от почтового ящика (из строки email:password)
      * @param {Date} registrationTime - Время начала регистрации
      * @returns {boolean} - Успешно ли введён код
      */
-    async waitAndEnterVerificationCode(email, registrationTime) {
+    async waitAndEnterVerificationCode(email, mailPassword, registrationTime) {
         // Получаем актуальные настройки почты
         const mailConfig = getMailConfig();
         
-        if (!mailConfig.enabled || !mailConfig.password) {
-            this.log('info', '📧 Автоматическая проверка почты отключена');
-            this.log('info', `📧 DEBUG: enabled=${mailConfig.enabled}, password=${mailConfig.password ? 'есть' : 'нет'}`);
+        if (!mailConfig.enabled) {
+            this.log('info', '📧 Автоматическая проверка почты отключена (MAIL_VERIFICATION_ENABLED != true)');
+            return false;
+        }
+        
+        if (!mailPassword) {
+            this.log('info', '📧 Пароль от почты не передан');
             return false;
         }
 
-        this.log('info', '📧 Ожидаем письмо с кодом подтверждения...');
+        this.log('info', `📧 Ожидаем письмо с кодом подтверждения для ${email}...`);
 
         try {
-            // Ждём код из почты
+            // Ждём код из почты (используем пароль от аккаунта)
             const code = await mailReader.waitForVerificationCode(
                 email, 
-                mailConfig.password, 
+                mailPassword, 
                 registrationTime,
                 (msg) => this.log('info', msg)
             );
