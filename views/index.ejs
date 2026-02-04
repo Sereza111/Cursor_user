@@ -41,8 +41,17 @@
                             rows="8"
                         ></textarea>
                         <small class="text-muted">Формат: email:password (один аккаунт на строку)</small>
-                        <!-- Скрытое поле для прокси (опционально) -->
-                        <textarea id="proxyList" style="display:none;"></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">🌐 Список прокси (опционально)</label>
+                        <textarea 
+                            id="proxyList" 
+                            class="form-control" 
+                            placeholder="Введите прокси для обхода блокировок&#10;Каждый прокси с новой строки&#10;&#10;Форматы:&#10;host:port@user:pass&#10;user:pass@host:port&#10;http://user:pass@host:port&#10;host:port (без авторизации)&#10;&#10;Пример:&#10;pool.proxy.market:10000@8543yJjp2KFc:s3GDaZ6y"
+                            rows="4"
+                        ></textarea>
+                        <small class="text-muted">Прокси распределяются по аккаунтам. Если прокси меньше - используются по кругу.</small>
                     </div>
 
                     <div class="mode-select">
