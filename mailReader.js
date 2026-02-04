@@ -217,11 +217,27 @@ async function waitForVerificationCode(email, password = null, afterDate = null,
     const searchAfter = afterDate || new Date(startTime - 60000); // За последнюю минуту
     
     logger(`[MAIL] 📧 Ожидаем письмо с кодом для ${email}...`);
+    logger(`[MAIL] 🔑 Пароль: ${mailPassword.substring(0, 3)}***${mailPassword.substring(mailPassword.length - 2)}`);
+    logger(`[MAIL] 🔗 IMAP: ${IMAP_HOST}:${IMAP_PORT}`);
     logger(`[MAIL] ⏱️ Таймаут: ${WAIT_TIMEOUT / 1000} сек, интервал проверки: ${CHECK_INTERVAL / 1000} сек`);
+    logger(`[MAIL] 📅 Ищем письма после: ${searchAfter.toISOString()}`);
+    
+    let firstCheck = true;
     
     while (Date.now() - startTime < WAIT_TIMEOUT) {
         try {
             const emails = await fetchCursorEmails(email, mailPassword, 20);
+            
+            // При первой проверке выводим все найденные письма
+            if (firstCheck) {
+                logger(`[MAIL] 📬 Найдено писем от Cursor/noreply: ${emails.length}`);
+                if (emails.length > 0) {
+                    emails.slice(0, 5).forEach((mail, i) => {
+                        logger(`[MAIL]   ${i + 1}. От: ${mail.from}, Дата: ${mail.date.toISOString()}, Код: ${mail.code || 'нет'}`);
+                    });
+                }
+                firstCheck = false;
+            }
             
             // Ищем письмо с кодом, пришедшее после начала регистрации
             for (const mail of emails) {
@@ -238,6 +254,10 @@ async function waitForVerificationCode(email, password = null, afterDate = null,
             
         } catch (error) {
             logger(`[MAIL] ⚠️ Ошибка проверки почты: ${error.message}`);
+            // Более подробная ошибка
+            if (error.source === 'authentication') {
+                logger(`[MAIL] ❌ Ошибка авторизации IMAP! Проверьте логин/пароль`);
+            }
         }
         
         // Ждём перед следующей проверкой
