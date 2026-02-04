@@ -231,8 +231,14 @@ sudo systemctl status cursor-register
 
 ### Настройка Nginx (reverse proxy)
 
+```bash
+# Создание файла конфигурации nginx
+sudo nano /etc/nginx/sites-available/cursor-register
+```
+
+Вставьте следующий конфиг:
+
 ```nginx
-# /etc/nginx/sites-available/cursor-register
 server {
     listen 80;
     server_name your-domain.com;
