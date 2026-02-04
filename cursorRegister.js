@@ -8,9 +8,14 @@ const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const { generateFullName, generateUserAgent, generateViewport } = require('./nameGenerator');
 const db = require('./database');
+const mailReader = require('./mailReader');
 
 // Подключаем stealth плагин для обхода обнаружения
 puppeteer.use(StealthPlugin());
+
+// Настройки проверки почты
+const MAIL_VERIFICATION_ENABLED = process.env.MAIL_VERIFICATION_ENABLED === 'true';
+const MAIL_PASSWORD = process.env.MAIL_PASSWORD || '';
 
 // FlareSolverr конфигурация
 const FLARESOLVERR_URL = process.env.FLARESOLVERR_URL || 'http://localhost:8191/v1';
@@ -592,14 +597,41 @@ class CursorRegister {
                 pageContent.toLowerCase().includes('check your email')) {
                 this.log('info', 'Требуется подтверждение email');
                 
-                // Для автоматизации нужно было бы проверить почту
-                // Здесь мы просто отмечаем, что регистрация прошла
+                // ==========================================
+                // ЭТАП 5: Автоматическое получение кода из почты
+                // ==========================================
+                if (MAIL_VERIFICATION_ENABLED && MAIL_PASSWORD) {
+                    this.log('info', '📧 Запуск автоматической проверки почты...');
+                    
+                    const verificationSuccess = await this.waitAndEnterVerificationCode(email, new Date(startTime));
+                    
+                    if (verificationSuccess) {
+                        // Проверяем trial статус после верификации
+                        const trialResult = await this.checkTrialStatus();
+                        const processingTime = Date.now() - startTime;
+
+                        db.updateAccount(accountId, {
+                            status: 'success',
+                            trial_status: trialResult.hasTriaI ? 'active' : 'verified',
+                            trial_days: trialResult.trialDays || 0,
+                            processing_time: processingTime
+                        });
+
+                        this.log('info', `✅ Регистрация и верификация завершены: ${email}`);
+                        await this.closeBrowser();
+                        return { success: true, verified: true, trial: trialResult };
+                    } else {
+                        this.log('warning', '⚠️ Автоматическая верификация не удалась');
+                    }
+                }
+                
+                // Если автоверификация отключена или не удалась
                 const processingTime = Date.now() - startTime;
                 
                 db.updateAccount(accountId, {
                     status: 'success',
                     trial_status: 'pending_verification',
-                    error_message: 'Требуется подтверждение email',
+                    error_message: 'Требуется подтверждение email (проверьте почту вручную)',
                     processing_time: processingTime
                 });
 
@@ -781,6 +813,135 @@ class CursorRegister {
 
             await this.closeBrowser();
             return { success: false, error: error.message };
+        }
+    }
+
+    /**
+     * Ожидание письма и ввод кода верификации
+     * @param {string} email - Email для проверки почты
+     * @param {Date} registrationTime - Время начала регистрации
+     * @returns {boolean} - Успешно ли введён код
+     */
+    async waitAndEnterVerificationCode(email, registrationTime) {
+        if (!MAIL_VERIFICATION_ENABLED || !MAIL_PASSWORD) {
+            this.log('info', '📧 Автоматическая проверка почты отключена');
+            return false;
+        }
+
+        this.log('info', '📧 Ожидаем письмо с кодом подтверждения...');
+
+        try {
+            // Ждём код из почты
+            const code = await mailReader.waitForVerificationCode(
+                email, 
+                MAIL_PASSWORD, 
+                registrationTime,
+                (msg) => this.log('info', msg)
+            );
+
+            if (!code) {
+                this.log('warning', '⚠️ Код подтверждения не получен из почты');
+                return false;
+            }
+
+            this.log('info', `✅ Получен код: ${code}, вводим на странице...`);
+
+            // Ищем поле для ввода кода
+            const codeSelectors = [
+                'input[name="code"]',
+                'input[placeholder*="code" i]',
+                'input[placeholder*="verification" i]',
+                'input[type="text"][maxlength="6"]',
+                'input[autocomplete="one-time-code"]',
+                '.verification-code input',
+                '#verification-code'
+            ];
+
+            let codeInputFound = false;
+            for (const selector of codeSelectors) {
+                const input = await this.page.$(selector);
+                if (input) {
+                    await this.humanType(selector, code);
+                    codeInputFound = true;
+                    this.log('info', `Код введён в поле: ${selector}`);
+                    break;
+                }
+            }
+
+            if (!codeInputFound) {
+                // Пробуем найти несколько полей для ввода кода (OTP стиль)
+                const otpInputs = await this.page.$$('input[maxlength="1"]');
+                if (otpInputs.length >= 6) {
+                    this.log('info', `Найдены OTP поля (${otpInputs.length} шт.), вводим код...`);
+                    for (let i = 0; i < 6 && i < otpInputs.length; i++) {
+                        await otpInputs[i].type(code[i], { delay: 100 });
+                        await this.humanDelay(50, 150);
+                    }
+                    codeInputFound = true;
+                }
+            }
+
+            if (!codeInputFound) {
+                this.log('error', '❌ Поле для ввода кода не найдено');
+                return false;
+            }
+
+            await this.humanDelay(500, 1000);
+
+            // Ищем кнопку подтверждения
+            const submitClicked = await this.page.evaluate(() => {
+                const buttons = document.querySelectorAll('button');
+                for (const btn of buttons) {
+                    const text = btn.textContent.toLowerCase();
+                    if (text.includes('verify') || 
+                        text.includes('confirm') ||
+                        text.includes('submit') ||
+                        text.includes('continue')) {
+                        btn.click();
+                        return true;
+                    }
+                }
+                const submitBtn = document.querySelector('button[type="submit"]');
+                if (submitBtn) {
+                    submitBtn.click();
+                    return true;
+                }
+                return false;
+            });
+
+            if (submitClicked) {
+                this.log('info', 'Код отправлен на проверку');
+            }
+
+            await this.humanDelay(3000, 5000);
+
+            // Проверяем результат
+            const currentUrl = this.page.url();
+            const pageText = await this.page.evaluate(() => document.body.innerText.toLowerCase());
+
+            if (pageText.includes('success') || 
+                pageText.includes('verified') ||
+                pageText.includes('welcome') ||
+                currentUrl.includes('dashboard') ||
+                currentUrl.includes('settings')) {
+                this.log('info', '✅ Email успешно подтверждён!');
+                return true;
+            }
+
+            if (pageText.includes('invalid') || 
+                pageText.includes('incorrect') ||
+                pageText.includes('wrong code') ||
+                pageText.includes('expired')) {
+                this.log('error', '❌ Код неверный или истёк');
+                return false;
+            }
+
+            this.log('info', '⚠️ Статус подтверждения неизвестен');
+            return false;
+
+        } catch (error) {
+            this.log('error', `❌ Ошибка ввода кода: ${error.message}`);
+            return false;
         }
     }
 

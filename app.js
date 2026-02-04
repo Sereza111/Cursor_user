@@ -22,6 +22,7 @@ const fs = require('fs');
 const db = require('./database');
 const CursorRegister = require('./cursorRegister');
 const { generateFullName } = require('./nameGenerator');
+const mailReader = require('./mailReader');
 
 // Инициализация приложения
 const app = express();
@@ -509,6 +510,84 @@ app.delete('/api/session/:sessionId', requireAuth, (req, res) => {
 app.get('/api/sessions', requireAuth, (req, res) => {
     const sessions = db.getAllSessions();
     res.json({ sessions });
+});
+
+// ==================== MAIL API ====================
+
+/**
+ * Тест подключения к почте
+ */
+app.post('/api/mail/test', requireAuth, async (req, res) => {
+    const { email, password } = req.body;
+    
+    if (!email || !password) {
+        return res.status(400).json({ error: 'Email и пароль обязательны' });
+    }
+    
+    try {
+        const connected = await mailReader.testConnection(email, password);
+        
+        if (connected) {
+            res.json({ 
+                success: true, 
+                message: `✅ Успешное подключение к ${email}`,
+                host: mailReader.IMAP_HOST,
+                port: mailReader.IMAP_PORT
+            });
+        } else {
+            res.status(401).json({ 
+                error: 'Не удалось подключиться. Проверьте логин/пароль.' 
+            });
+        }
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * Получение писем от Cursor
+ */
+app.post('/api/mail/fetch', requireAuth, async (req, res) => {
+    const { email, password, limit = 10 } = req.body;
+    
+    if (!email || !password) {
+        return res.status(400).json({ error: 'Email и пароль обязательны' });
+    }
+    
+    try {
+        const emails = await mailReader.fetchCursorEmails(email, password, limit);
+        
+        res.json({ 
+            success: true, 
+            count: emails.length,
+            emails: emails.map(e => ({
+                from: e.from,
+                subject: e.subject,
+                date: e.date,
+                code: e.code,
+                hasCode: !!e.code
+            }))
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * Получение статуса IMAP конфигурации
+ */
+app.get('/api/mail/config', requireAuth, (req, res) => {
+    const mailEnabled = process.env.MAIL_VERIFICATION_ENABLED === 'true';
+    const mailPassword = process.env.MAIL_PASSWORD;
+    
+    res.json({
+        enabled: mailEnabled,
+        configured: !!mailPassword,
+        host: mailReader.IMAP_HOST,
+        port: mailReader.IMAP_PORT,
+        waitTimeout: parseInt(process.env.MAIL_WAIT_TIMEOUT) || 120000,
+        checkInterval: parseInt(process.env.MAIL_CHECK_INTERVAL) || 5000
+    });
 });
 
 // ==================== ОШИБКИ ====================
