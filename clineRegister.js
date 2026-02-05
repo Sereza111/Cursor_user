@@ -687,13 +687,147 @@ class ClineRegister {
                 this.log('info', `📄 Текст страницы: ${text.substring(0, 300)}...`);
                 
                 // ==========================================
-                // Диалог 1: "Let's get started" - Terms of Service + Register
+                // Диалог 1: "Choose your account type" - Personal/Organization
+                // ВАЖНО: Проверяем ЭТО ПЕРВЫМ, т.к. страница также содержит "let's get started"
+                // URL: https://app.cline.bot/auth/account-type
+                // ==========================================
+                if (currentUrl.includes('account-type') || 
+                    text.includes('choose your account type') ||
+                    (text.includes('personal') && text.includes('organization') && text.includes('continue'))) {
+                    
+                    this.log('info', '📋 Найден диалог "Choose your account type" - выбор Personal/Organization');
+                    
+                    // 1. Выбираем Personal (кликаем на карточку/блок)
+                    const personalClicked = await this.safeAction(async () => {
+                        return await this.page.evaluate(() => {
+                            // Ищем все кликабельные элементы
+                            const allElements = document.querySelectorAll('button, div, label, span, a');
+                            
+                            for (const el of allElements) {
+                                const text = el.textContent?.trim().toLowerCase() || '';
+                                const classList = el.className?.toLowerCase() || '';
+                                
+                                // Ищем элемент который содержит ТОЛЬКО "personal" (не organization)
+                                if (text === 'personal' || 
+                                    (text.includes('personal') && !text.includes('organization') && text.length < 50)) {
+                                    console.log('Нашли элемент Personal:', el.tagName, text);
+                                    el.click();
+                                    return `clicked:${el.tagName}:${text.substring(0, 30)}`;
+                                }
+                            }
+                            
+                            // Пробуем найти по data-атрибутам
+                            const dataSelectors = [
+                                '[data-value="personal"]',
+                                '[data-type="personal"]',
+                                '[data-testid*="personal"]',
+                                '[data-option="personal"]'
+                            ];
+                            
+                            for (const selector of dataSelectors) {
+                                const el = document.querySelector(selector);
+                                if (el) {
+                                    el.click();
+                                    return `selector:${selector}`;
+                                }
+                            }
+                            
+                            // Ищем карточки/опции и кликаем на первую (обычно Personal)
+                            const cards = document.querySelectorAll('[class*="card"], [class*="option"], [class*="choice"], [class*="type"]');
+                            for (const card of cards) {
+                                const cardText = card.textContent?.toLowerCase() || '';
+                                if (cardText.includes('personal') && !cardText.includes('organization')) {
+                                    card.click();
+                                    return 'card:personal';
+                                }
+                            }
+                            
+                            return false;
+                        });
+                    }, 'выбор Personal');
+                    
+                    if (personalClicked) {
+                        this.log('info', `✅ Выбрали Personal: ${personalClicked}`);
+                        await this.humanDelay(1000, 1500);
+                    } else {
+                        this.log('warning', '⚠️ Personal не найден через evaluate, пробуем Puppeteer...');
+                        
+                        // Пробуем через Puppeteer - ищем все элементы с текстом personal
+                        const elements = await this.page.$$('button, div, span, label');
+                        for (const el of elements) {
+                            const text = await el.evaluate(e => e.textContent?.trim().toLowerCase() || '');
+                            const tagName = await el.evaluate(e => e.tagName);
+                            
+                            if (text === 'personal' || 
+                                (text.includes('personal') && !text.includes('organization') && text.length < 50)) {
+                                this.log('info', `✅ Нашли Personal через Puppeteer: [${tagName}] "${text}"`);
+                                await el.click();
+                                await this.humanDelay(1000, 1500);
+                                break;
+                            }
+                        }
+                    }
+                    
+                    // 2. Нажимаем Continue
+                    await this.humanDelay(1500, 2000);
+                    
+                    const continueClicked = await this.safeAction(async () => {
+                        return await this.page.evaluate(() => {
+                            const buttons = document.querySelectorAll('button, input[type="submit"], a[role="button"]');
+                            
+                            for (const btn of buttons) {
+                                const btnText = (btn.textContent || btn.value || '').toLowerCase().trim();
+                                
+                                if (btnText === 'continue' || btnText.includes('continue') ||
+                                    btnText === 'next' || btnText.includes('next') ||
+                                    btnText === 'proceed') {
+                                    console.log('Нашли кнопку Continue:', btnText);
+                                    btn.click();
+                                    return `continue:${btnText}`;
+                                }
+                            }
+                            
+                            // Пробуем submit кнопку
+                            const submitBtn = document.querySelector('button[type="submit"], input[type="submit"]');
+                            if (submitBtn) {
+                                submitBtn.click();
+                                return 'submit';
+                            }
+                            
+                            return false;
+                        });
+                    }, 'нажатие Continue');
+                    
+                    if (continueClicked) {
+                        this.log('info', `✅ Нажали Continue: ${continueClicked}`);
+                        dialogsHandled++;
+                        await this.humanDelay(3000, 5000);
+                        continue;
+                    } else {
+                        // Через Puppeteer
+                        const buttons = await this.page.$$('button, input[type="submit"]');
+                        for (const btn of buttons) {
+                            const text = await btn.evaluate(el => (el.textContent || el.value || '').toLowerCase().trim());
+                            if (text.includes('continue') || text.includes('next')) {
+                                await btn.click();
+                                this.log('info', `✅ Кликнули Continue через Puppeteer: "${text}"`);
+                                dialogsHandled++;
+                                await this.humanDelay(3000, 5000);
+                                break;
+                            }
+                        }
+                    }
+                    continue;
+                }
+                
+                // ==========================================
+                // Диалог 2: "Terms of Service" - с чекбоксом
                 // Страница с чекбоксом "I agree to Cline's Terms of Service"
                 // ==========================================
-                if (text.includes("let's get started") || text.includes('create an account') ||
-                    text.includes('terms of service') || text.includes('privacy policy')) {
+                if (text.includes('terms of service') || text.includes('privacy policy') ||
+                    text.includes('i agree') || html.includes('checkbox')) {
                     
-                    this.log('info', '📋 Найден диалог "Let\'s get started" - Terms of Service');
+                    this.log('info', '📋 Найден диалог Terms of Service (с чекбоксом)');
                     
                     // 1. Ставим галочку Terms of Service
                     const checkboxClicked = await this.safeAction(async () => {
