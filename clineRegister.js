@@ -290,40 +290,73 @@ class ClineRegister {
                     // Нажимаем "No" (не оставаться в сессии)
                     const noClicked = await this.safeAction(async () => {
                         return await this.page.evaluate(() => {
-                            // Ищем кнопку "No"
+                            // Сначала ищем кнопку "No" по ID (самый надёжный способ для MS)
+                            const noBtn = document.querySelector('#idBtn_Back');
+                            if (noBtn) {
+                                console.log('Найдена кнопка No по ID:', noBtn);
+                                noBtn.click();
+                                return 'idBtn_Back';
+                            }
+                            
+                            // Ищем по другим селекторам
                             const noSelectors = [
-                                '#idBtn_Back',
                                 'button[id*="Back"]',
                                 'input[value="No"]',
-                                'button:contains("No")'
+                                'input[id*="Back"]'
                             ];
                             
                             for (const selector of noSelectors) {
-                                const btn = document.querySelector(selector);
-                                if (btn) {
-                                    btn.click();
-                                    return true;
-                                }
+                                try {
+                                    const btn = document.querySelector(selector);
+                                    if (btn) {
+                                        console.log('Найдена кнопка No:', selector);
+                                        btn.click();
+                                        return selector;
+                                    }
+                                } catch (e) {}
                             }
                             
                             // Ищем по тексту
                             const buttons = document.querySelectorAll('button, input[type="submit"], input[type="button"]');
                             for (const btn of buttons) {
-                                const btnText = (btn.textContent || btn.value || '').toLowerCase();
+                                const btnText = (btn.textContent || btn.value || '').toLowerCase().trim();
                                 if (btnText === 'no' || btnText === 'нет') {
+                                    console.log('Найдена кнопка No по тексту:', btnText);
                                     btn.click();
-                                    return true;
+                                    return 'text:no';
                                 }
                             }
+                            
+                            // Логируем все кнопки для отладки
+                            const allBtns = document.querySelectorAll('button, input[type="submit"], input[type="button"]');
+                            console.log('Все кнопки на странице:', Array.from(allBtns).map(b => ({
+                                id: b.id,
+                                text: b.textContent?.trim(),
+                                value: b.value,
+                                type: b.type
+                            })));
+                            
                             return false;
                         });
                     }, 'нажатие No');
                     
                     if (noClicked) {
-                        this.log('info', '✅ Нажали "No" на "Stay signed in?"');
+                        this.log('info', `✅ Нажали "No" на "Stay signed in?" (способ: ${noClicked})`);
                         dialogsHandled++;
                         await this.humanDelay(3000, 5000);
                         continue;
+                    } else {
+                        this.log('warning', '⚠️ Не удалось найти кнопку No, пробуем другой способ...');
+                        
+                        // Пробуем через Puppeteer клик
+                        const puppeteerClicked = await this.page.$('#idBtn_Back');
+                        if (puppeteerClicked) {
+                            await puppeteerClicked.click();
+                            this.log('info', '✅ Нажали "No" через Puppeteer');
+                            dialogsHandled++;
+                            await this.humanDelay(3000, 5000);
+                            continue;
+                        }
                     }
                 }
                 
