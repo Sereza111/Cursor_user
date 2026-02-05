@@ -24,6 +24,7 @@ const CursorRegister = require('./cursorRegister');
 const ClineRegister = require('./clineRegister');
 const { generateFullName } = require('./nameGenerator');
 const mailReader = require('./mailReader');
+const VNCProxy = require('./vncProxy');
 
 // Инициализация приложения
 const app = express();
@@ -134,6 +135,18 @@ app.get('/', requireAuth, (req, res) => {
     res.render('index', { 
         user: req.session.username,
         sessions 
+    });
+});
+
+/**
+ * Страница VNC Viewer
+ */
+app.get('/vnc', requireAuth, (req, res) => {
+    res.render('vnc', { 
+        user: req.session.username,
+        vncHost: process.env.VNC_HOST || 'localhost',
+        vncPort: process.env.VNC_PORT || '5900',
+        vncPassword: process.env.VNC_PASSWORD || ''
     });
 });
 
@@ -655,14 +668,23 @@ async function startServer() {
         // Инициализируем базу данных
         await db.initDatabase();
         
+        // Создаём HTTP сервер для WebSocket поддержки
+        const http = require('http');
+        const server = http.createServer(app);
+        
+        // Запускаем VNC WebSocket прокси
+        const vncProxy = new VNCProxy(server);
+        vncProxy.start();
+        
         // Запускаем сервер
-        app.listen(PORT, () => {
+        server.listen(PORT, () => {
             console.log('');
             console.log('╔═══════════════════════════════════════════════════════════╗');
             console.log('║                                                           ║');
             console.log('║      🚀 CURSOR MASS REGISTER PANEL                        ║');
             console.log('║                                                           ║');
             console.log(`║      Сервер запущен: http://localhost:${PORT}               ║`);
+            console.log('║      VNC WebSocket: ws://localhost:' + PORT + '/vnc-ws        ║');
             console.log('║                                                           ║');
             console.log('║      Логин: admin / admin123 (измените в .env)           ║');
             console.log('║                                                           ║');

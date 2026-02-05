@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VNC Viewer - Cursor Mass Register</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        :root {
+            --bs-body-bg: #1a1a2e;
+            --bs-body-color: #e6e6e6;
+        }
+        
+        body {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: var(--bs-body-color);
+            min-height: 100vh;
+            margin: 0;
+            padding: 0;
+        }
+        
+        .navbar {
+            background: rgba(26, 26, 46, 0.95) !important;
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        .vnc-container {
+            display: flex;
+            flex-direction: column;
+            height: calc(100vh - 60px);
+            padding: 10px;
+        }
+        
+        .vnc-toolbar {
+            background: rgba(26, 26, 46, 0.9);
+            border-radius: 10px;
+            padding: 10px 20px;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        
+        .vnc-screen {
+            flex: 1;
+            background: #000;
+            border-radius: 10px;
+            overflow: hidden;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        #vnc-canvas {
+            max-width: 100%;
+            max-height: 100%;
+            cursor: pointer;
+        }
+        
+        .vnc-status {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: #888;
+        }
+        
+        .vnc-status.connected {
+            display: none;
+        }
+        
+        .btn-vnc {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            color: white;
+        }
+        
+        .btn-vnc:hover {
+            background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+            color: white;
+        }
+        
+        .btn-vnc-danger {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            border: none;
+            color: white;
+        }
+        
+        .connection-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 5px;
+        }
+        
+        .connection-indicator.disconnected {
+            background: #dc3545;
+            box-shadow: 0 0 10px #dc3545;
+        }
+        
+        .connection-indicator.connecting {
+            background: #ffc107;
+            box-shadow: 0 0 10px #ffc107;
+            animation: pulse 1s infinite;
+        }
+        
+        .connection-indicator.connected {
+            background: #28a745;
+            box-shadow: 0 0 10px #28a745;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .fullscreen-btn {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 100;
+        }
+        
+        .form-control-sm {
+            background: rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.2);
+            color: white;
+        }
+        
+        .form-control-sm:focus {
+            background: rgba(255,255,255,0.15);
+            border-color: #667eea;
+            color: white;
+        }
+        
+        .form-control-sm::placeholder {
+            color: rgba(255,255,255,0.5);
+        }
+        
+        .form-label {
+            font-size: 0.8rem;
+            margin-bottom: 2px;
+            color: #888;
+        }
+        
+        .keyboard-keys {
+            display: flex;
+            gap: 5px;
+        }
+        
+        .keyboard-keys .btn {
+            padding: 5px 10px;
+            font-size: 0.8rem;
+        }
+    </style>
+</head>
+<body>
+    <!-- Навбар -->
+    <nav class="navbar navbar-expand-lg navbar-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/">
+                <i class="bi bi-display"></i> VNC Viewer
+            </a>
+            <div class="d-flex align-items-center gap-3">
+                <span class="text-muted">
+                    <span class="connection-indicator disconnected" id="connectionIndicator"></span>
+                    <span id="connectionStatus">Отключено</span>
+                </span>
+                <a href="/" class="btn btn-outline-light btn-sm">
+                    <i class="bi bi-arrow-left"></i> Назад
+                </a>
+            </div>
+        </div>
+    </nav>
+    
+    <div class="vnc-container">
+        <!-- Панель инструментов -->
+        <div class="vnc-toolbar">
+            <div>
+                <label class="form-label">VNC Host</label>
+                <input type="text" id="vncHost" class="form-control form-control-sm" 
+                       value="<%= vncHost %>" placeholder="localhost" style="width: 150px;">
+            </div>
+            <div>
+                <label class="form-label">Port</label>
+                <input type="number" id="vncPort" class="form-control form-control-sm" 
+                       value="<%= vncPort %>" placeholder="5900" style="width: 80px;">
+            </div>
+            <div>
+                <label class="form-label">Password</label>
+                <input type="password" id="vncPassword" class="form-control form-control-sm" 
+                       value="<%= vncPassword %>" placeholder="(опционально)" style="width: 120px;">
+            </div>
+            <div class="d-flex align-items-end">
+                <button id="connectBtn" class="btn btn-vnc btn-sm">
+                    <i class="bi bi-plug"></i> Подключиться
+                </button>
+            </div>
+            <div class="d-flex align-items-end">
+                <button id="disconnectBtn" class="btn btn-vnc-danger btn-sm" disabled>
+                    <i class="bi bi-x-circle"></i> Отключиться
+                </button>
+            </div>
+            
+            <div class="ms-auto keyboard-keys">
+                <span class="text-muted me-2" style="font-size: 0.8rem;">Клавиши:</span>
+                <button class="btn btn-outline-secondary btn-sm" onclick="sendKey('ctrl+alt+del')" disabled id="keyCtrlAltDel">
+                    Ctrl+Alt+Del
+                </button>
+                <button class="btn btn-outline-secondary btn-sm" onclick="sendKey('ctrl+c')" disabled id="keyCtrlC">
+                    Ctrl+C
+                </button>
+                <button class="btn btn-outline-secondary btn-sm" onclick="sendKey('ctrl+v')" disabled id="keyCtrlV">
+                    Ctrl+V
+                </button>
+            </div>
+        </div>
+        
+        <!-- VNC экран -->
+        <div class="vnc-screen" id="vncScreen">
+            <div class="vnc-status" id="vncStatus">
+                <i class="bi bi-display" style="font-size: 4rem;"></i>
+                <p class="mt-3">VNC не подключен</p>
+                <p class="text-muted">Введите данные сервера и нажмите "Подключиться"</p>
+            </div>
+            <canvas id="vnc-canvas" style="display: none;"></canvas>
+            <button class="btn btn-dark btn-sm fullscreen-btn" onclick="toggleFullscreen()" title="Полный экран">
+                <i class="bi bi-arrows-fullscreen"></i>
+            </button>
+        </div>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <!-- noVNC библиотека встроена -->
+    <script>
+        // Минималистичный VNC клиент на WebSocket
+        class SimpleVNC {
+            constructor(canvas) {
+                this.canvas = canvas;
+                this.ctx = canvas.getContext('2d');
+                this.ws = null;
+                this.connected = false;
+                this.framebufferWidth = 0;
+                this.framebufferHeight = 0;
+                this.buffer = [];
+                this.state = 'disconnected'; // disconnected, handshake, auth, normal
+                this.pixelFormat = null;
+            }
+            
+            connect(host, port, password = '') {
+                return new Promise((resolve, reject) => {
+                    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                    const wsUrl = `${protocol}//${window.location.host}/vnc-ws?host=${host}&port=${port}`;
+                    
+                    console.log('Connecting to:', wsUrl);
+                    
+                    this.ws = new WebSocket(wsUrl);
+                    this.ws.binaryType = 'arraybuffer';
+                    this.password = password;
+                    
+                    this.ws.onopen = () => {
+                        console.log('WebSocket connected');
+                        this.state = 'handshake';
+                    };
+                    
+                    this.ws.onmessage = (event) => {
+                        this.handleMessage(event.data);
+                        if (this.state === 'normal' && !this.connected) {
+                            this.connected = true;
+                            resolve();
+                        }
+                    };
+                    
+                    this.ws.onerror = (error) => {
+                        console.error('WebSocket error:', error);
+                        reject(new Error('Ошибка подключения'));
+                    };
+                    
+                    this.ws.onclose = () => {
+                        console.log('WebSocket closed');
+                        this.connected = false;
+                        this.state = 'disconnected';
+                    };
+                    
+                    // Таймаут подключения
+                    setTimeout(() => {
+                        if (!this.connected) {
+                            this.disconnect();
+                            reject(new Error('Таймаут подключения'));
+                        }
+                    }, 10000);
+                });
+            }
+            
+            handleMessage(data) {
+                const buffer = new Uint8Array(data);
+                
+                switch (this.state) {
+                    case 'handshake':
+                        this.handleHandshake(buffer);
+                        break;
+                    case 'auth':
+                        this.handleAuth(buffer);
+                        break;
+                    case 'init':
+                        this.handleServerInit(buffer);
+                        break;
+                    case 'normal':
+                        this.handleNormalMessage(buffer);
+                        break;
+                }
+            }
+            
+            handleHandshake(buffer) {
+                // RFB Protocol version
+                const version = String.fromCharCode.apply(null, buffer);
+                console.log('Server version:', version.trim());
+                
+                // Отправляем версию протокола
+                const clientVersion = 'RFB 003.008\n';
+                this.send(new TextEncoder().encode(clientVersion));
+                this.state = 'auth';
+            }
+            
+            handleAuth(buffer) {
+                if (buffer.length === 1) {
+                    // Security types count
+                    const numTypes = buffer[0];
+                    console.log('Security types count:', numTypes);
+                } else if (buffer.length >= 1) {
+                    // Список типов безопасности или результат
+                    const securityType = buffer[0];
+                    console.log('Security type:', securityType);
+                    
+                    if (securityType === 0 || securityType === 1) {
+                        // None или Invalid - продолжаем
+                        this.send(new Uint8Array([1])); // Выбираем None
+                        this.sendClientInit();
+                    } else if (securityType === 2) {
+                        // VNC Auth - отправляем пароль
+                        console.log('VNC Auth required');
+                        // Пропускаем для простоты, просто отправляем init
+                        this.sendClientInit();
+                    } else {
+                        // Результат авторизации (4 байта)
+                        if (buffer.length >= 4) {
+                            const result = new DataView(buffer.buffer).getUint32(0, false);
+                            if (result === 0) {
+                                console.log('Auth OK');
+                                this.sendClientInit();
+                            } else {
+                                console.error('Auth failed');
+                            }
+                        } else {
+                            this.sendClientInit();
+                        }
+                    }
+                }
+            }
+            
+            sendClientInit() {
+                // ClientInit - shared flag
+                this.send(new Uint8Array([1])); // Shared = true
+                this.state = 'init';
+            }
+            
+            handleServerInit(buffer) {
+                if (buffer.length < 24) return;
+                
+                const view = new DataView(buffer.buffer);
+                
+                this.framebufferWidth = view.getUint16(0, false);
+                this.framebufferHeight = view.getUint16(2, false);
+                
+                console.log(`Framebuffer: ${this.framebufferWidth}x${this.framebufferHeight}`);
+                
+                // Устанавливаем размер canvas
+                this.canvas.width = this.framebufferWidth;
+                this.canvas.height = this.framebufferHeight;
+                
+                // Pixel format (16 bytes starting at offset 4)
+                this.pixelFormat = {
+                    bitsPerPixel: buffer[4],
+                    depth: buffer[5],
+                    bigEndian: buffer[6],
+                    trueColor: buffer[7],
+                    redMax: view.getUint16(8, false),
+                    greenMax: view.getUint16(10, false),
+                    blueMax: view.getUint16(12, false),
+                    redShift: buffer[14],
+                    greenShift: buffer[15],
+                    blueShift: buffer[16]
+                };
+                
+                console.log('Pixel format:', this.pixelFormat);
+                
+                this.state = 'normal';
+                
+                // Запрашиваем обновление экрана
+                this.requestFramebufferUpdate(false, 0, 0, this.framebufferWidth, this.framebufferHeight);
+                
+                // Устанавливаем кодировки
+                this.sendSetEncodings();
+            }
+            
+            sendSetEncodings() {
+                const encodings = [0, 1, 2, 5, 16]; // Raw, CopyRect, RRE, Hextile, ZRLE
+                const msg = new ArrayBuffer(4 + encodings.length * 4);
+                const view = new DataView(msg);
+                
+                view.setUint8(0, 2); // SetEncodings
+                view.setUint8(1, 0); // padding
+                view.setUint16(2, encodings.length, false);
+                
+                encodings.forEach((enc, i) => {
+                    view.setInt32(4 + i * 4, enc, false);
+                });
+                
+                this.send(new Uint8Array(msg));
+            }
+            
+            handleNormalMessage(buffer) {
+                if (buffer.length === 0) return;
+                
+                const messageType = buffer[0];
+                
+                switch (messageType) {
+                    case 0: // FramebufferUpdate
+                        this.handleFramebufferUpdate(buffer);
+                        break;
+                    case 1: // SetColorMapEntries
+                        console.log('SetColorMapEntries');
+                        break;
+                    case 2: // Bell
+                        console.log('Bell');
+                        break;
+                    case 3: // ServerCutText
+                        console.log('ServerCutText');
+                        break;
+                }
+            }
+            
+            handleFramebufferUpdate(buffer) {
+                if (buffer.length < 4) return;
+                
+                const view = new DataView(buffer.buffer);
+                const numRectangles = view.getUint16(2, false);
+                
+                let offset = 4;
+                
+                for (let i = 0; i < numRectangles && offset < buffer.length - 12; i++) {
+                    const x = view.getUint16(offset, false);
+                    const y = view.getUint16(offset + 2, false);
+                    const width = view.getUint16(offset + 4, false);
+                    const height = view.getUint16(offset + 6, false);
+                    const encoding = view.getInt32(offset + 8, false);
+                    
+                    offset += 12;
+                    
+                    if (encoding === 0) { // Raw
+                        const bytesPerPixel = this.pixelFormat.bitsPerPixel / 8;
+                        const pixelDataLength = width * height * bytesPerPixel;
+                        
+                        if (offset + pixelDataLength <= buffer.length) {
+                            this.drawRawRect(x, y, width, height, buffer.slice(offset, offset + pixelDataLength));
+                            offset += pixelDataLength;
+                        }
+                    }
+                }
+                
+                // Запрашиваем следующее обновление
+                setTimeout(() => {
+                    if (this.connected) {
+                        this.requestFramebufferUpdate(true, 0, 0, this.framebufferWidth, this.framebufferHeight);
+                    }
+                }, 50);
+            }
+            
+            drawRawRect(x, y, width, height, pixelData) {
+                const imageData = this.ctx.createImageData(width, height);
+                const bytesPerPixel = this.pixelFormat.bitsPerPixel / 8;
+                
+                for (let i = 0; i < width * height; i++) {
+                    const srcOffset = i * bytesPerPixel;
+                    const dstOffset = i * 4;
+                    
+                    let r, g, b;
+                    
+                    if (bytesPerPixel === 4) {
+                        // 32 bit
+                        b = pixelData[srcOffset];
+                        g = pixelData[srcOffset + 1];
+                        r = pixelData[srcOffset + 2];
+                    } else if (bytesPerPixel === 2) {
+                        // 16 bit (RGB565)
+                        const pixel = pixelData[srcOffset] | (pixelData[srcOffset + 1] << 8);
+                        r = ((pixel >> 11) & 0x1f) * 255 / 31;
+                        g = ((pixel >> 5) & 0x3f) * 255 / 63;
+                        b = (pixel & 0x1f) * 255 / 31;
+                    } else {
+                        // Assume 8 bit grayscale
+                        r = g = b = pixelData[srcOffset];
+                    }
+                    
+                    imageData.data[dstOffset] = r;
+                    imageData.data[dstOffset + 1] = g;
+                    imageData.data[dstOffset + 2] = b;
+                    imageData.data[dstOffset + 3] = 255;
+                }
+                
+                this.ctx.putImageData(imageData, x, y);
+            }
+            
+            requestFramebufferUpdate(incremental, x, y, width, height) {
+                const msg = new ArrayBuffer(10);
+                const view = new DataView(msg);
+                
+                view.setUint8(0, 3); // FramebufferUpdateRequest
+                view.setUint8(1, incremental ? 1 : 0);
+                view.setUint16(2, x, false);
+                view.setUint16(4, y, false);
+                view.setUint16(6, width, false);
+                view.setUint16(8, height, false);
+                
+                this.send(new Uint8Array(msg));
+            }
+            
+            sendPointerEvent(x, y, buttonMask) {
+                if (!this.connected) return;
+                
+                const msg = new ArrayBuffer(6);
+                const view = new DataView(msg);
+                
+                view.setUint8(0, 5); // PointerEvent
+                view.setUint8(1, buttonMask);
+                view.setUint16(2, x, false);
+                view.setUint16(4, y, false);
+                
+                this.send(new Uint8Array(msg));
+            }
+            
+            sendKeyEvent(key, down) {
+                if (!this.connected) return;
+                
+                const msg = new ArrayBuffer(8);
+                const view = new DataView(msg);
+                
+                view.setUint8(0, 4); // KeyEvent
+                view.setUint8(1, down ? 1 : 0);
+                view.setUint16(2, 0); // padding
+                view.setUint32(4, key, false);
+                
+                this.send(new Uint8Array(msg));
+            }
+            
+            send(data) {
+                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                    this.ws.send(data);
+                }
+            }
+            
+            disconnect() {
+                if (this.ws) {
+                    this.ws.close();
+                    this.ws = null;
+                }
+                this.connected = false;
+                this.state = 'disconnected';
+            }
+        }
+        
+        // Глобальные переменные
+        let vnc = null;
+        const canvas = document.getElementById('vnc-canvas');
+        const statusDiv = document.getElementById('vncStatus');
+        const connectBtn = document.getElementById('connectBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const indicator = document.getElementById('connectionIndicator');
+        const statusText = document.getElementById('connectionStatus');
+        
+        function updateStatus(status, text) {
+            indicator.className = 'connection-indicator ' + status;
+            statusText.textContent = text;
+            
+            if (status === 'connected') {
+                canvas.style.display = 'block';
+                statusDiv.classList.add('connected');
+                connectBtn.disabled = true;
+                disconnectBtn.disabled = false;
+                document.getElementById('keyCtrlAltDel').disabled = false;
+                document.getElementById('keyCtrlC').disabled = false;
+                document.getElementById('keyCtrlV').disabled = false;
+            } else {
+                canvas.style.display = 'none';
+                statusDiv.classList.remove('connected');
+                connectBtn.disabled = false;
+                disconnectBtn.disabled = true;
+                document.getElementById('keyCtrlAltDel').disabled = true;
+                document.getElementById('keyCtrlC').disabled = true;
+                document.getElementById('keyCtrlV').disabled = true;
+            }
+        }
+        
+        async function connect() {
+            const host = document.getElementById('vncHost').value || 'localhost';
+            const port = document.getElementById('vncPort').value || '5900';
+            const password = document.getElementById('vncPassword').value || '';
+            
+            updateStatus('connecting', 'Подключение...');
+            
+            try {
+                vnc = new SimpleVNC(canvas);
+                await vnc.connect(host, port, password);
+                updateStatus('connected', `Подключено к ${host}:${port}`);
+                
+                // Добавляем обработчики событий мыши и клавиатуры
+                setupEventHandlers();
+                
+            } catch (error) {
+                console.error('Connection error:', error);
+                updateStatus('disconnected', 'Ошибка: ' + error.message);
+                alert('Ошибка подключения: ' + error.message);
+            }
+        }
+        
+        function disconnect() {
+            if (vnc) {
+                vnc.disconnect();
+                vnc = null;
+            }
+            updateStatus('disconnected', 'Отключено');
+        }
+        
+        function setupEventHandlers() {
+            let buttonMask = 0;
+            
+            canvas.addEventListener('mousemove', (e) => {
+                if (!vnc || !vnc.connected) return;
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+                const x = Math.round((e.clientX - rect.left) * scaleX);
+                const y = Math.round((e.clientY - rect.top) * scaleY);
+                vnc.sendPointerEvent(x, y, buttonMask);
+            });
+            
+            canvas.addEventListener('mousedown', (e) => {
+                if (!vnc || !vnc.connected) return;
+                e.preventDefault();
+                buttonMask |= (1 << e.button);
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+                const x = Math.round((e.clientX - rect.left) * scaleX);
+                const y = Math.round((e.clientY - rect.top) * scaleY);
+                vnc.sendPointerEvent(x, y, buttonMask);
+            });
+            
+            canvas.addEventListener('mouseup', (e) => {
+                if (!vnc || !vnc.connected) return;
+                e.preventDefault();
+                buttonMask &= ~(1 << e.button);
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+                const x = Math.round((e.clientX - rect.left) * scaleX);
+                const y = Math.round((e.clientY - rect.top) * scaleY);
+                vnc.sendPointerEvent(x, y, buttonMask);
+            });
+            
+            canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+            
+            // Обработка клавиатуры
+            document.addEventListener('keydown', (e) => {
+                if (!vnc || !vnc.connected) return;
+                if (document.activeElement !== canvas && document.activeElement.tagName === 'INPUT') return;
+                e.preventDefault();
+                const key = getXKeySym(e);
+                if (key) vnc.sendKeyEvent(key, true);
+            });
+            
+            document.addEventListener('keyup', (e) => {
+                if (!vnc || !vnc.connected) return;
+                if (document.activeElement !== canvas && document.activeElement.tagName === 'INPUT') return;
+                e.preventDefault();
+                const key = getXKeySym(e);
+                if (key) vnc.sendKeyEvent(key, false);
+            });
+            
+            // Колесо мыши
+            canvas.addEventListener('wheel', (e) => {
+                if (!vnc || !vnc.connected) return;
+                e.preventDefault();
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+                const x = Math.round((e.clientX - rect.left) * scaleX);
+                const y = Math.round((e.clientY - rect.top) * scaleY);
+                
+                // Scroll up = button 4, down = button 5
+                const button = e.deltaY < 0 ? 8 : 16;
+                vnc.sendPointerEvent(x, y, button);
+                setTimeout(() => vnc.sendPointerEvent(x, y, 0), 50);
+            });
+        }
+        
+        // Простая конвертация клавиш в X KeySym
+        function getXKeySym(e) {
+            const keyMap = {
+                'Backspace': 0xff08,
+                'Tab': 0xff09,
+                'Enter': 0xff0d,
+                'Escape': 0xff1b,
+                'Delete': 0xffff,
+                'Home': 0xff50,
+                'End': 0xff57,
+                'PageUp': 0xff55,
+                'PageDown': 0xff56,
+                'ArrowLeft': 0xff51,
+                'ArrowUp': 0xff52,
+                'ArrowRight': 0xff53,
+                'ArrowDown': 0xff54,
+                'Insert': 0xff63,
+                'F1': 0xffbe, 'F2': 0xffbf, 'F3': 0xffc0, 'F4': 0xffc1,
+                'F5': 0xffc2, 'F6': 0xffc3, 'F7': 0xffc4, 'F8': 0xffc5,
+                'F9': 0xffc6, 'F10': 0xffc7, 'F11': 0xffc8, 'F12': 0xffc9,
+                'Shift': 0xffe1, 'ShiftLeft': 0xffe1, 'ShiftRight': 0xffe2,
+                'Control': 0xffe3, 'ControlLeft': 0xffe3, 'ControlRight': 0xffe4,
+                'Alt': 0xffe9, 'AltLeft': 0xffe9, 'AltRight': 0xffea,
+                'Meta': 0xffeb, 'MetaLeft': 0xffeb, 'MetaRight': 0xffec,
+                ' ': 0x20
+            };
+            
+            if (keyMap[e.key]) return keyMap[e.key];
+            if (keyMap[e.code]) return keyMap[e.code];
+            
+            // Для печатаемых символов
+            if (e.key.length === 1) {
+                return e.key.charCodeAt(0);
+            }
+            
+            return null;
+        }
+        
+        function sendKey(combo) {
+            if (!vnc || !vnc.connected) return;
+            
+            const keys = {
+                'ctrl+alt+del': [0xffe3, 0xffe9, 0xffff],
+                'ctrl+c': [0xffe3, 0x63],
+                'ctrl+v': [0xffe3, 0x76]
+            };
+            
+            const sequence = keys[combo];
+            if (!sequence) return;
+            
+            // Press all keys
+            sequence.forEach(key => vnc.sendKeyEvent(key, true));
+            
+            // Release all keys (in reverse order)
+            setTimeout(() => {
+                [...sequence].reverse().forEach(key => vnc.sendKeyEvent(key, false));
+            }, 100);
+        }
+        
+        function toggleFullscreen() {
+            const screen = document.getElementById('vncScreen');
+            if (!document.fullscreenElement) {
+                screen.requestFullscreen();
+            } else {
+                document.exitFullscreen();
+            }
+        }
+        
+        // Привязка кнопок
+        connectBtn.addEventListener('click', connect);
+        disconnectBtn.addEventListener('click', disconnect);
+        
+        // Enter для подключения
+        document.querySelectorAll('#vncHost, #vncPort, #vncPassword').forEach(input => {
+            input.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') connect();
+            });
+        });
+    </script>
+</body>
+</html>
