@@ -126,6 +126,8 @@ class ClineRegister {
                 '--no-zygote',
                 '--single-process',
                 '--disable-software-rasterizer',
+                '--ozone-platform=headless',
+                '--disable-extensions',
                 '--window-size=1920,1080',
                 '--disable-blink-features=AutomationControlled',
                 '--disable-infobars',
