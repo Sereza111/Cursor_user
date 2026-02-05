@@ -94,11 +94,71 @@ async function initDatabase() {
     db.run(`CREATE INDEX IF NOT EXISTS idx_accounts_email ON accounts(email)`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_logs_session ON logs(session_id)`);
 
+    // Миграции - добавляем недостающие колонки
+    await runMigrations();
+
     // Сохраняем БД
     saveDatabase();
     
     console.log('✅ База данных инициализирована');
     return db;
+}
+
+/**
+ * Миграции - добавление новых колонок к существующим таблицам
+ */
+async function runMigrations() {
+    console.log('🔄 Проверка миграций БД...');
+    
+    // Получаем информацию о структуре таблицы accounts
+    const tableInfo = db.exec("PRAGMA table_info(accounts)");
+    const columns = tableInfo[0]?.values?.map(row => row[1]) || [];
+    
+    // Миграция: добавление service_type
+    if (!columns.includes('service_type')) {
+        console.log('📦 Миграция: добавление колонки service_type');
+        try {
+            db.run("ALTER TABLE accounts ADD COLUMN service_type TEXT DEFAULT 'cursor'");
+            console.log('✅ Колонка service_type добавлена');
+        } catch (err) {
+            console.log('⚠️ service_type: ' + err.message);
+        }
+    }
+    
+    // Миграция: добавление access_token
+    if (!columns.includes('access_token')) {
+        console.log('📦 Миграция: добавление колонки access_token');
+        try {
+            db.run("ALTER TABLE accounts ADD COLUMN access_token TEXT");
+            console.log('✅ Колонка access_token добавлена');
+        } catch (err) {
+            console.log('⚠️ access_token: ' + err.message);
+        }
+    }
+    
+    // Миграция: добавление refresh_token
+    if (!columns.includes('refresh_token')) {
+        console.log('📦 Миграция: добавление колонки refresh_token');
+        try {
+            db.run("ALTER TABLE accounts ADD COLUMN refresh_token TEXT");
+            console.log('✅ Колонка refresh_token добавлена');
+        } catch (err) {
+            console.log('⚠️ refresh_token: ' + err.message);
+        }
+    }
+    
+    // Миграция: добавление cookies_json
+    if (!columns.includes('cookies_json')) {
+        console.log('📦 Миграция: добавление колонки cookies_json');
+        try {
+            db.run("ALTER TABLE accounts ADD COLUMN cookies_json TEXT");
+            console.log('✅ Колонка cookies_json добавлена');
+        } catch (err) {
+            console.log('⚠️ cookies_json: ' + err.message);
+        }
+    }
+    
+    console.log('✅ Миграции выполнены');
 }
 
 /**

@@ -65,7 +65,12 @@ app.use(session({
 const limiter = rateLimit({
     windowMs: 1 * 60 * 1000, // 1 минута
     max: 60, // 60 запросов в минуту
-    message: { error: 'Слишком много запросов, попробуйте позже' }
+    message: { error: 'Слишком много запросов, попробуйте позже' },
+    // Отключаем валидацию для proxy (уже настроен trust proxy)
+    validate: {
+        xForwardedForHeader: false,
+        trustProxy: false
+    }
 });
 app.use('/api/', limiter);
 
