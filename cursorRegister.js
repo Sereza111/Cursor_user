@@ -10,8 +10,27 @@ const { generateFullName, generateUserAgent, generateViewport } = require('./nam
 const db = require('./database');
 const mailReader = require('./mailReader');
 
-// Подключаем stealth плагин для обхода обнаружения
-puppeteer.use(StealthPlugin());
+// Подключаем stealth плагин с максимальными настройками
+const stealthPlugin = StealthPlugin();
+// Включаем все evasions
+stealthPlugin.enabledEvasions.add('chrome.app');
+stealthPlugin.enabledEvasions.add('chrome.csi');
+stealthPlugin.enabledEvasions.add('chrome.loadTimes');
+stealthPlugin.enabledEvasions.add('chrome.runtime');
+stealthPlugin.enabledEvasions.add('defaultArgs');
+stealthPlugin.enabledEvasions.add('iframe.contentWindow');
+stealthPlugin.enabledEvasions.add('media.codecs');
+stealthPlugin.enabledEvasions.add('navigator.hardwareConcurrency');
+stealthPlugin.enabledEvasions.add('navigator.languages');
+stealthPlugin.enabledEvasions.add('navigator.permissions');
+stealthPlugin.enabledEvasions.add('navigator.plugins');
+stealthPlugin.enabledEvasions.add('navigator.webdriver');
+stealthPlugin.enabledEvasions.add('sourceurl');
+stealthPlugin.enabledEvasions.add('user-agent-override');
+stealthPlugin.enabledEvasions.add('webgl.vendor');
+stealthPlugin.enabledEvasions.add('window.outerdimensions');
+
+puppeteer.use(stealthPlugin);
 
 // Настройки проверки почты
 const getMailConfig = () => ({
@@ -226,7 +245,7 @@ class CursorRegister {
     }
 
     /**
-     * Запуск браузера
+     * Запуск браузера с максимальной маскировкой
      */
     async launchBrowser(proxy = null) {
         const viewport = generateViewport();
@@ -247,9 +266,38 @@ class CursorRegister {
                 '--window-size=1920,1080',
                 '--disable-blink-features=AutomationControlled',
                 '--disable-infobars',
-                '--lang=en-US,en'
+                '--lang=en-US,en',
+                // Дополнительные флаги для обхода детекции
+                '--disable-features=IsolateOrigins,site-per-process',
+                '--disable-site-isolation-trials',
+                '--disable-web-security',
+                '--allow-running-insecure-content',
+                '--disable-features=TranslateUI',
+                '--disable-ipc-flooding-protection',
+                '--disable-renderer-backgrounding',
+                '--disable-backgrounding-occluded-windows',
+                '--disable-background-timer-throttling',
+                '--enable-features=NetworkService,NetworkServiceInProcess',
+                '--force-color-profile=srgb',
+                '--metrics-recording-only',
+                '--no-first-run',
+                '--password-store=basic',
+                '--use-mock-keychain',
+                '--export-tagged-pdf',
+                '--disable-popup-blocking',
+                // Скрываем автоматизацию
+                '--disable-automation',
+                '--disable-blink-automation',
+                // WebGL и Canvas
+                '--enable-webgl',
+                '--use-gl=swiftshader',
+                '--enable-webgl-draft-extensions',
+                // Аудио/Видео
+                '--autoplay-policy=user-gesture-required',
+                '--disable-background-media-suspend'
             ],
-            defaultViewport: viewport
+            defaultViewport: null, // Используем полный размер окна
+            ignoreDefaultArgs: ['--enable-automation', '--enable-blink-features=IdleDetection']
         };
 
         // Добавляем прокси если есть
@@ -270,38 +318,216 @@ class CursorRegister {
             this.log('info', `🔐 Прокси авторизация установлена: ${proxyConfig.username}`);
         }
 
-        // Устанавливаем User-Agent
+        // Устанавливаем User-Agent (реальный Chrome)
         await this.page.setUserAgent(userAgent);
 
         // Настраиваем viewport
         await this.page.setViewport(viewport);
 
-        // Добавляем дополнительные заголовки
+        // Добавляем дополнительные заголовки как у реального браузера
         await this.page.setExtraHTTPHeaders({
             'Accept-Language': 'en-US,en;q=0.9',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Cache-Control': 'max-age=0',
+            'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+            'Sec-Ch-Ua-Mobile': '?0',
+            'Sec-Ch-Ua-Platform': '"Windows"',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Upgrade-Insecure-Requests': '1'
         });
 
-        // Перехват для подмены webdriver
+        // Расширенная маскировка признаков автоматизации
         await this.page.evaluateOnNewDocument(() => {
-            // Скрываем признаки автоматизации
-            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-            Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+            // ========================================
+            // 1. Удаляем webdriver флаг
+            // ========================================
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined,
+                configurable: true
+            });
             
-            // Подменяем Chrome runtime
-            window.chrome = { runtime: {} };
+            // Удаляем из prototype
+            delete Navigator.prototype.webdriver;
             
-            // Подменяем permissions
+            // ========================================
+            // 2. Подменяем plugins (как у реального Chrome)
+            // ========================================
+            Object.defineProperty(navigator, 'plugins', {
+                get: () => {
+                    const plugins = [
+                        { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+                        { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+                        { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' }
+                    ];
+                    const pluginArray = Object.create(PluginArray.prototype);
+                    plugins.forEach((p, i) => {
+                        const plugin = Object.create(Plugin.prototype);
+                        Object.defineProperties(plugin, {
+                            name: { value: p.name },
+                            filename: { value: p.filename },
+                            description: { value: p.description },
+                            length: { value: 1 }
+                        });
+                        pluginArray[i] = plugin;
+                    });
+                    Object.defineProperty(pluginArray, 'length', { value: plugins.length });
+                    return pluginArray;
+                }
+            });
+            
+            // ========================================
+            // 3. Languages
+            // ========================================
+            Object.defineProperty(navigator, 'languages', {
+                get: () => ['en-US', 'en']
+            });
+            
+            Object.defineProperty(navigator, 'language', {
+                get: () => 'en-US'
+            });
+            
+            // ========================================
+            // 4. Hardware Concurrency (реалистичное значение)
+            // ========================================
+            Object.defineProperty(navigator, 'hardwareConcurrency', {
+                get: () => 8
+            });
+            
+            // ========================================
+            // 5. Device Memory
+            // ========================================
+            Object.defineProperty(navigator, 'deviceMemory', {
+                get: () => 8
+            });
+            
+            // ========================================
+            // 6. Platform
+            // ========================================
+            Object.defineProperty(navigator, 'platform', {
+                get: () => 'Win32'
+            });
+            
+            // ========================================
+            // 7. Chrome runtime (важно для детекции)
+            // ========================================
+            window.chrome = {
+                app: {
+                    isInstalled: false,
+                    InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+                    RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' }
+                },
+                runtime: {
+                    OnInstalledReason: { CHROME_UPDATE: 'chrome_update', INSTALL: 'install', SHARED_MODULE_UPDATE: 'shared_module_update', UPDATE: 'update' },
+                    OnRestartRequiredReason: { APP_UPDATE: 'app_update', OS_UPDATE: 'os_update', PERIODIC: 'periodic' },
+                    PlatformArch: { ARM: 'arm', ARM64: 'arm64', MIPS: 'mips', MIPS64: 'mips64', X86_32: 'x86-32', X86_64: 'x86-64' },
+                    PlatformNaclArch: { ARM: 'arm', MIPS: 'mips', MIPS64: 'mips64', X86_32: 'x86-32', X86_64: 'x86-64' },
+                    PlatformOs: { ANDROID: 'android', CROS: 'cros', LINUX: 'linux', MAC: 'mac', OPENBSD: 'openbsd', WIN: 'win' },
+                    RequestUpdateCheckStatus: { NO_UPDATE: 'no_update', THROTTLED: 'throttled', UPDATE_AVAILABLE: 'update_available' },
+                    connect: function() {},
+                    sendMessage: function() {}
+                },
+                csi: function() {},
+                loadTimes: function() {}
+            };
+            
+            // ========================================
+            // 8. Permissions API
+            // ========================================
             const originalQuery = window.navigator.permissions.query;
             window.navigator.permissions.query = (parameters) => (
-                parameters.name === 'notifications' 
-                    ? Promise.resolve({ state: Notification.permission }) 
-                    : originalQuery(parameters)
+                parameters.name === 'notifications' ?
+                    Promise.resolve({ state: Notification.permission }) :
+                    originalQuery(parameters)
             );
+            
+            // ========================================
+            // 9. WebGL маскировка
+            // ========================================
+            const getParameterProto = WebGLRenderingContext.prototype.getParameter;
+            WebGLRenderingContext.prototype.getParameter = function(parameter) {
+                // UNMASKED_VENDOR_WEBGL
+                if (parameter === 37445) {
+                    return 'Google Inc. (NVIDIA)';
+                }
+                // UNMASKED_RENDERER_WEBGL
+                if (parameter === 37446) {
+                    return 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1650 Direct3D11 vs_5_0 ps_5_0, D3D11)';
+                }
+                return getParameterProto.call(this, parameter);
+            };
+            
+            // WebGL2
+            const getParameterProto2 = WebGL2RenderingContext.prototype.getParameter;
+            WebGL2RenderingContext.prototype.getParameter = function(parameter) {
+                if (parameter === 37445) {
+                    return 'Google Inc. (NVIDIA)';
+                }
+                if (parameter === 37446) {
+                    return 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1650 Direct3D11 vs_5_0 ps_5_0, D3D11)';
+                }
+                return getParameterProto2.call(this, parameter);
+            };
+            
+            // ========================================
+            // 10. Canvas fingerprint protection
+            // ========================================
+            const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
+            HTMLCanvasElement.prototype.toDataURL = function(type) {
+                if (type === 'image/png' && this.width === 220 && this.height === 30) {
+                    // Это вероятно fingerprint тест - добавляем шум
+                    const context = this.getContext('2d');
+                    const imageData = context.getImageData(0, 0, this.width, this.height);
+                    for (let i = 0; i < imageData.data.length; i += 4) {
+                        imageData.data[i] = imageData.data[i] ^ (Math.random() * 2);
+                    }
+                    context.putImageData(imageData, 0, 0);
+                }
+                return originalToDataURL.apply(this, arguments);
+            };
+            
+            // ========================================
+            // 11. Отключаем automation флаги
+            // ========================================
+            Object.defineProperty(document, 'hidden', { get: () => false });
+            Object.defineProperty(document, 'visibilityState', { get: () => 'visible' });
+            
+            // ========================================
+            // 12. Connection API
+            // ========================================
+            Object.defineProperty(navigator, 'connection', {
+                get: () => ({
+                    effectiveType: '4g',
+                    rtt: 50,
+                    downlink: 10,
+                    saveData: false
+                })
+            });
+            
+            // ========================================
+            // 13. Battery API
+            // ========================================
+            Object.defineProperty(navigator, 'getBattery', {
+                value: () => Promise.resolve({
+                    charging: true,
+                    chargingTime: 0,
+                    dischargingTime: Infinity,
+                    level: 1.0
+                })
+            });
+            
+            // ========================================
+            // 14. Timezone
+            // ========================================
+            Date.prototype.getTimezoneOffset = function() {
+                return -180; // Moscow timezone (UTC+3)
+            };
         });
 
-        this.log('info', 'Браузер запущен');
+        this.log('info', '🚀 Браузер запущен с улучшенной маскировкой');
         return this.browser;
     }
 
