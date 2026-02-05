@@ -115,7 +115,7 @@ class ClineRegister {
         const proxyConfig = this.parseProxy(proxy);
 
         const launchOptions = {
-            headless: CLINE_CONFIG.HEADLESS ? 'new' : false,
+            headless: CLINE_CONFIG.HEADLESS,
             slowMo: CLINE_CONFIG.SLOW_MO,
             args: [
                 '--no-sandbox',
@@ -123,6 +123,9 @@ class ClineRegister {
                 '--disable-dev-shm-usage',
                 '--disable-accelerated-2d-canvas',
                 '--disable-gpu',
+                '--no-zygote',
+                '--single-process',
+                '--disable-software-rasterizer',
                 '--window-size=1920,1080',
                 '--disable-blink-features=AutomationControlled',
                 '--disable-infobars',
