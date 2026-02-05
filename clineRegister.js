@@ -505,6 +505,219 @@ class ClineRegister {
     }
 
     /**
+     * Обработка диалогов на authkit.cline.bot (Accept, Continue, Allow и т.д.)
+     */
+    async handleClineAuthDialogs() {
+        this.log('info', '🔄 Проверяем наличие диалогов CLINE Auth...');
+        
+        let dialogsHandled = 0;
+        const maxDialogs = 5;
+        
+        for (let i = 0; i < maxDialogs; i++) {
+            try {
+                await this.humanDelay(2000, 3000);
+                
+                const currentUrl = this.page.url();
+                this.log('info', `📍 CLINE URL: ${currentUrl}`);
+                
+                // Если уже на dashboard или app - выходим
+                if (currentUrl.includes('app.cline.bot') || 
+                    currentUrl.includes('dashboard') ||
+                    currentUrl.includes('api.cline.bot/api/v1/auth/callback')) {
+                    this.log('info', '✅ Авторизация CLINE завершена');
+                    break;
+                }
+                
+                // Проверяем что мы на authkit.cline.bot
+                if (!currentUrl.includes('authkit.cline.bot') && !currentUrl.includes('cline.bot')) {
+                    this.log('info', '📍 Не на CLINE, пропускаем...');
+                    break;
+                }
+                
+                // Получаем текст страницы
+                const pageContent = await this.safeAction(async () => {
+                    return await this.page.evaluate(() => ({
+                        text: document.body.innerText.toLowerCase(),
+                        title: document.title.toLowerCase(),
+                        html: document.body.innerHTML.substring(0, 2000)
+                    }));
+                }, 'получение контента CLINE');
+                
+                if (!pageContent) continue;
+                
+                const { text, title, html } = pageContent;
+                this.log('info', `📄 Текст страницы: ${text.substring(0, 200)}...`);
+                
+                // ==========================================
+                // Диалог: Consent / Accept / Allow access
+                // ==========================================
+                if (text.includes('accept') || text.includes('allow') || 
+                    text.includes('consent') || text.includes('authorize') ||
+                    text.includes('continue') || text.includes('grant') ||
+                    text.includes('permission') || text.includes('access')) {
+                    
+                    this.log('info', '📋 Найден диалог согласия CLINE');
+                    
+                    // Скриншот для отладки
+                    await this.page.screenshot({ path: `cline_consent_dialog.png` });
+                    
+                    // Пробуем нажать Accept/Allow/Continue
+                    const acceptClicked = await this.safeAction(async () => {
+                        return await this.page.evaluate(() => {
+                            // Сначала ищем по распространённым селекторам
+                            const acceptSelectors = [
+                                // Кнопки по ID
+                                '#accept-button',
+                                '#accept',
+                                '#allow-button',
+                                '#allow',
+                                '#continue-button',
+                                '#continue',
+                                '#authorize-button',
+                                '#authorize',
+                                '#consent-button',
+                                '#consent',
+                                '#submit',
+                                '#confirm',
+                                // data атрибуты
+                                '[data-testid="accept-button"]',
+                                '[data-testid="allow-button"]',
+                                '[data-testid="continue-button"]',
+                                '[data-action="accept"]',
+                                '[data-action="allow"]',
+                                // Классы
+                                '.accept-button',
+                                '.allow-button',
+                                '.continue-button',
+                                '.consent-button',
+                                '.authorize-button',
+                                // Типы
+                                'button[type="submit"]',
+                                'input[type="submit"]'
+                            ];
+                            
+                            for (const selector of acceptSelectors) {
+                                try {
+                                    const btn = document.querySelector(selector);
+                                    if (btn && btn.offsetParent !== null) {
+                                        console.log('Найдена кнопка по селектору:', selector);
+                                        btn.click();
+                                        return selector;
+                                    }
+                                } catch (e) {}
+                            }
+                            
+                            // Ищем по тексту кнопки
+                            const buttons = document.querySelectorAll('button, a[role="button"], div[role="button"], input[type="submit"], input[type="button"]');
+                            const acceptTexts = ['accept', 'allow', 'continue', 'authorize', 'grant', 'yes', 'confirm', 'ok', 'принять', 'разрешить', 'продолжить'];
+                            
+                            for (const btn of buttons) {
+                                const btnText = (btn.textContent || btn.value || '').toLowerCase().trim();
+                                const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
+                                
+                                for (const acceptText of acceptTexts) {
+                                    if (btnText.includes(acceptText) || ariaLabel.includes(acceptText)) {
+                                        console.log('Найдена кнопка по тексту:', btnText);
+                                        btn.click();
+                                        return `text:${btnText}`;
+                                    }
+                                }
+                            }
+                            
+                            // Логируем все кнопки для отладки
+                            const allBtns = document.querySelectorAll('button, a[role="button"], div[role="button"], input[type="submit"], input[type="button"]');
+                            console.log('Все кнопки на CLINE:', Array.from(allBtns).map(b => ({
+                                tag: b.tagName,
+                                id: b.id,
+                                text: b.textContent?.trim().substring(0, 50),
+                                value: b.value,
+                                className: b.className?.substring(0, 50),
+                                visible: b.offsetParent !== null
+                            })));
+                            
+                            return false;
+                        });
+                    }, 'нажатие Accept на CLINE');
+                    
+                    if (acceptClicked) {
+                        this.log('info', `✅ Нажали Accept на CLINE (способ: ${acceptClicked})`);
+                        dialogsHandled++;
+                        await this.humanDelay(3000, 5000);
+                        continue;
+                    } else {
+                        this.log('warning', '⚠️ Не удалось найти кнопку Accept, пробуем через Puppeteer...');
+                        
+                        // Пробуем через Puppeteer найти и кликнуть
+                        const buttons = await this.page.$$('button, a[role="button"], input[type="submit"]');
+                        
+                        for (const btn of buttons) {
+                            const text = await btn.evaluate(el => (el.textContent || el.value || '').toLowerCase().trim());
+                            
+                            if (text.includes('accept') || text.includes('allow') || 
+                                text.includes('continue') || text.includes('authorize') ||
+                                text.includes('yes') || text.includes('confirm')) {
+                                this.log('info', `✅ Нашли кнопку через Puppeteer: "${text}"`);
+                                await btn.click();
+                                dialogsHandled++;
+                                await this.humanDelay(3000, 5000);
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                // ==========================================
+                // Диалог: Ошибка или проблема
+                // ==========================================
+                if (text.includes('error') || text.includes('failed') || 
+                    text.includes('problem') || text.includes('try again')) {
+                    this.log('warning', '⚠️ Обнаружена ошибка на странице CLINE');
+                    
+                    // Ищем кнопку "Try again" или "Retry"
+                    const retryClicked = await this.safeAction(async () => {
+                        return await this.page.evaluate(() => {
+                            const buttons = document.querySelectorAll('button, a');
+                            for (const btn of buttons) {
+                                const text = (btn.textContent || '').toLowerCase();
+                                if (text.includes('try again') || text.includes('retry') || 
+                                    text.includes('back') || text.includes('return')) {
+                                    btn.click();
+                                    return true;
+                                }
+                            }
+                            return false;
+                        });
+                    }, 'нажатие Retry');
+                    
+                    if (retryClicked) {
+                        this.log('info', '🔄 Нажали Try Again');
+                        dialogsHandled++;
+                        await this.humanDelay(3000, 5000);
+                        continue;
+                    }
+                }
+                
+                // Если на странице нет явных диалогов - выходим
+                this.log('info', '📋 Диалогов CLINE больше не найдено');
+                break;
+                
+            } catch (error) {
+                if (error.message.includes('Execution context was destroyed') ||
+                    error.message.includes('navigation')) {
+                    this.log('info', '⚡ Навигация на CLINE, ждём...');
+                    await this.humanDelay(2000, 3000);
+                    continue;
+                }
+                this.log('warning', `⚠️ Ошибка обработки диалога CLINE: ${error.message}`);
+                break;
+            }
+        }
+        
+        this.log('info', `📊 Обработано диалогов CLINE: ${dialogsHandled}`);
+        return dialogsHandled;
+    }
+
+    /**
      * Авторизация через Microsoft (Outlook)
      * @param {string} email - Outlook email
      * @param {string} password - Пароль от Outlook
@@ -768,6 +981,11 @@ class ClineRegister {
                 // ==========================================
                 await this.handleMicrosoftDialogs();
             }
+
+            // ==========================================
+            // ЭТАП 5.5: Обработка кнопок на authkit.cline.bot
+            // ==========================================
+            await this.handleClineAuthDialogs();
 
             // ==========================================
             // ЭТАП 6: Проверка результата и получение токена
