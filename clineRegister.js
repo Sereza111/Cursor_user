@@ -247,13 +247,13 @@ class ClineRegister {
     }
 
     /**
-     * Обработка диалогов Microsoft (Stay signed in?, permissions, etc.)
+     * Обработка диалогов Microsoft (Stay signed in?, permissions, consent и т.д.)
      */
     async handleMicrosoftDialogs() {
         this.log('info', '🔄 Проверяем наличие диалогов Microsoft...');
         
         let dialogsHandled = 0;
-        const maxDialogs = 5; // Максимум диалогов для обработки
+        const maxDialogs = 8; // Максимум диалогов для обработки
         
         for (let i = 0; i < maxDialogs; i++) {
             try {
@@ -279,6 +279,109 @@ class ClineRegister {
                 if (!pageContent) continue;
                 
                 const { text, title } = pageContent;
+                
+                // ==========================================
+                // Диалог 0: Microsoft Consent (microsoft.com/consent) - русский/английский
+                // "Предоставить приложению доступ к вашим данным?" / "Give this app access..."
+                // ==========================================
+                if (currentUrl.includes('microsoft.com/consent') || currentUrl.includes('/oauth2/authorize') ||
+                    text.includes('предоставить приложению доступ') || text.includes('дать разрешение') ||
+                    text.includes('give this app access') || text.includes('cline bot inc')) {
+                    
+                    this.log('info', '📋 Найден диалог Microsoft Consent (разрешения для приложения)');
+                    
+                    // Скриншот для отладки
+                    await this.page.screenshot({ path: `ms_consent_dialog.png` });
+                    
+                    const acceptClicked = await this.safeAction(async () => {
+                        return await this.page.evaluate(() => {
+                            // Ищем кнопку "Принять" / "Accept" по тексту
+                            const buttons = document.querySelectorAll('button, input[type="submit"], input[type="button"]');
+                            
+                            // Тексты кнопок на разных языках
+                            const acceptTexts = [
+                                'принять', 'accept', 'yes', 'да', 'allow', 'разрешить',
+                                'continue', 'продолжить', 'grant', 'предоставить', 'ok'
+                            ];
+                            
+                            for (const btn of buttons) {
+                                const btnText = (btn.textContent || btn.value || '').toLowerCase().trim();
+                                console.log('Проверяем кнопку:', btnText);
+                                
+                                for (const acceptText of acceptTexts) {
+                                    if (btnText === acceptText || btnText.includes(acceptText)) {
+                                        console.log('Нашли кнопку Accept:', btnText);
+                                        btn.click();
+                                        return `text:${btnText}`;
+                                    }
+                                }
+                            }
+                            
+                            // Пробуем найти по ID
+                            const idSelectors = [
+                                '#idBtn_Accept', '#acceptButton', '#accept-button',
+                                '#idSIButton9', 'input[value="Accept"]', 'input[value="Принять"]'
+                            ];
+                            
+                            for (const selector of idSelectors) {
+                                const btn = document.querySelector(selector);
+                                if (btn) {
+                                    console.log('Нашли кнопку Accept по ID:', selector);
+                                    btn.click();
+                                    return selector;
+                                }
+                            }
+                            
+                            // Ищем любую синюю кнопку (обычно это Accept)
+                            const allBtns = document.querySelectorAll('button');
+                            for (const btn of allBtns) {
+                                const style = window.getComputedStyle(btn);
+                                const bgColor = style.backgroundColor;
+                                // Синие цвета Microsoft
+                                if (bgColor.includes('0, 120, 212') || bgColor.includes('rgb(0, 120, 212)') ||
+                                    bgColor.includes('0078d4') || btn.className.includes('primary')) {
+                                    console.log('Нашли синюю кнопку (primary):', btn.textContent);
+                                    btn.click();
+                                    return 'primary-button';
+                                }
+                            }
+                            
+                            // Логируем все кнопки
+                            console.log('Все кнопки:', Array.from(buttons).map(b => ({
+                                text: b.textContent?.trim(),
+                                value: b.value,
+                                id: b.id,
+                                class: b.className
+                            })));
+                            
+                            return false;
+                        });
+                    }, 'нажатие Принять на Consent');
+                    
+                    if (acceptClicked) {
+                        this.log('info', `✅ Нажали "Принять" на Microsoft Consent (способ: ${acceptClicked})`);
+                        dialogsHandled++;
+                        await this.humanDelay(3000, 5000);
+                        continue;
+                    } else {
+                        this.log('warning', '⚠️ Не удалось найти кнопку Принять, пробуем через Puppeteer...');
+                        
+                        // Пробуем через Puppeteer
+                        const buttons = await this.page.$$('button, input[type="submit"]');
+                        for (const btn of buttons) {
+                            const text = await btn.evaluate(el => (el.textContent || el.value || '').toLowerCase().trim());
+                            if (text.includes('принять') || text.includes('accept') || 
+                                text.includes('yes') || text.includes('да')) {
+                                this.log('info', `✅ Нашли кнопку через Puppeteer: "${text}"`);
+                                await btn.click();
+                                dialogsHandled++;
+                                await this.humanDelay(3000, 5000);
+                                break;
+                            }
+                        }
+                        continue;
+                    }
+                }
                 
                 // ==========================================
                 // Диалог 1: "Stay signed in?"
