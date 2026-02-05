@@ -271,24 +271,30 @@ class CursorRegister {
         // Парсим прокси
         const proxyConfig = this.parseProxy(proxy);
 
+        // Определяем режим headless
+        const isHeadless = CONFIG.HEADLESS;
+        
+        // Устанавливаем DISPLAY для Xvfb (Linux с VNC)
+        if (!isHeadless && process.platform === 'linux') {
+            process.env.DISPLAY = process.env.DISPLAY || ':99';
+            this.log('info', `🖥️ Используем DISPLAY=${process.env.DISPLAY}`);
+        }
+
         const launchOptions = {
-            headless: CONFIG.HEADLESS,
+            headless: isHeadless,
             slowMo: CONFIG.SLOW_MO,
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
                 '--disable-dev-shm-usage',
                 '--disable-accelerated-2d-canvas',
-                '--disable-gpu',
                 '--no-zygote',
-                '--single-process',
-                '--disable-software-rasterizer',
-                '--ozone-platform=headless',
                 '--disable-extensions',
                 '--window-size=1920,1080',
                 '--disable-blink-features=AutomationControlled',
                 '--disable-infobars',
                 '--lang=en-US,en',
+                '--start-maximized',
                 // Дополнительные флаги для обхода детекции
                 '--disable-features=IsolateOrigins,site-per-process',
                 '--disable-site-isolation-trials',
@@ -321,6 +327,13 @@ class CursorRegister {
             defaultViewport: null, // Используем полный размер окна
             ignoreDefaultArgs: ['--enable-automation', '--enable-blink-features=IdleDetection']
         };
+        
+        // Для headless режима добавляем специфичные аргументы
+        if (isHeadless) {
+            launchOptions.args.push('--disable-gpu');
+            launchOptions.args.push('--single-process');
+            launchOptions.args.push('--disable-software-rasterizer');
+        }
 
         // Добавляем прокси если есть
         if (proxyConfig) {
