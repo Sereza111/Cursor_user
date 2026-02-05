@@ -43,6 +43,7 @@ async function initDatabase() {
         CREATE TABLE IF NOT EXISTS accounts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             session_id TEXT NOT NULL,
+            service_type TEXT DEFAULT 'cursor',
             email TEXT NOT NULL,
             password TEXT NOT NULL,
             password_hash TEXT,
@@ -54,6 +55,10 @@ async function initDatabase() {
             trial_days INTEGER DEFAULT 0,
             error_message TEXT,
             proxy_used TEXT,
+            session_token TEXT,
+            access_token TEXT,
+            refresh_token TEXT,
+            cookies_json TEXT,
             created_at TEXT DEFAULT (datetime('now')),
             updated_at TEXT DEFAULT (datetime('now')),
             processing_time INTEGER DEFAULT 0
@@ -191,11 +196,11 @@ function getSession(sessionId) {
 /**
  * Добавление аккаунта в очередь
  */
-function addAccount(sessionId, email, password) {
+function addAccount(sessionId, email, password, serviceType = 'cursor') {
     const passwordHash = bcrypt.hashSync(password, 10);
     const result = run(
-        `INSERT INTO accounts (session_id, email, password, password_hash, status) VALUES (?, ?, ?, ?, 'pending')`,
-        [sessionId, email, password, passwordHash]
+        `INSERT INTO accounts (session_id, service_type, email, password, password_hash, status) VALUES (?, ?, ?, ?, ?, 'pending')`,
+        [sessionId, serviceType, email, password, passwordHash]
     );
     return result?.lastInsertRowid || 0;
 }
@@ -287,9 +292,22 @@ function getSessionLogs(sessionId, limit = 100) {
 function getSuccessAccountsForExport(sessionId) {
     return query(`
         SELECT email, password, first_name, last_name, full_name, 
-               trial_status, trial_days, created_at
+               service_type, trial_status, trial_days, 
+               session_token, access_token, refresh_token, cookies_json,
+               created_at
         FROM accounts 
-        WHERE session_id = ? AND status = 'success' AND trial_status = 'active'
+        WHERE session_id = ? AND status = 'success'
+        ORDER BY id ASC
+    `, [sessionId]);
+}
+
+/**
+ * Получение всех успешных аккаунтов для экспорта (все типы)
+ */
+function getAllSuccessAccounts(sessionId) {
+    return query(`
+        SELECT * FROM accounts 
+        WHERE session_id = ? AND status = 'success'
         ORDER BY id ASC
     `, [sessionId]);
 }

@@ -21,6 +21,7 @@ const fs = require('fs');
 // Импорт модулей
 const db = require('./database');
 const CursorRegister = require('./cursorRegister');
+const ClineRegister = require('./clineRegister');
 const { generateFullName } = require('./nameGenerator');
 const mailReader = require('./mailReader');
 
@@ -180,7 +181,7 @@ function parseAccountsList(text) {
  */
 app.post('/api/start', requireAuth, async (req, res) => {
     try {
-        const { accounts: accountsText, mode = 'register', proxies = '' } = req.body;
+        const { accounts: accountsText, mode = 'register', proxies = '', service = 'cursor' } = req.body;
         
         if (!accountsText || !accountsText.trim()) {
             return res.status(400).json({ error: 'Список аккаунтов пуст' });
@@ -201,20 +202,21 @@ app.post('/api/start', requireAuth, async (req, res) => {
         // Создаём сессию
         const sessionId = uuidv4();
         db.createSession(sessionId, accounts.length);
-        db.addLog(sessionId, 'info', `Создана сессия. Всего аккаунтов: ${accounts.length}`);
+        db.addLog(sessionId, 'info', `Создана сессия [${service.toUpperCase()}]. Всего аккаунтов: ${accounts.length}`);
         
-        // Добавляем аккаунты в БД
+        // Добавляем аккаунты в БД с указанием типа сервиса
         for (const acc of accounts) {
-            db.addAccount(sessionId, acc.email, acc.password);
+            db.addAccount(sessionId, acc.email, acc.password, service);
         }
         
         // Запускаем обработку в фоне
-        startProcessing(sessionId, mode, proxyList);
+        startProcessing(sessionId, mode, proxyList, service);
         
         res.json({ 
             success: true, 
             sessionId,
-            totalAccounts: accounts.length 
+            totalAccounts: accounts.length,
+            service
         });
         
     } catch (error) {
@@ -225,22 +227,32 @@ app.post('/api/start', requireAuth, async (req, res) => {
 
 /**
  * Фоновая обработка аккаунтов
+ * @param {string} sessionId - ID сессии
+ * @param {string} mode - Режим (register/login)
+ * @param {Array} proxies - Список прокси
+ * @param {string} service - Тип сервиса (cursor/cline)
  */
-async function startProcessing(sessionId, mode, proxies) {
+async function startProcessing(sessionId, mode, proxies, service = 'cursor') {
     const delay = parseInt(process.env.REGISTER_DELAY) || 10000;
     const maxRetries = parseInt(process.env.MAX_RETRIES) || 3;
     
-    // Создаём экземпляр регистратора
-    const registrator = new CursorRegister(sessionId, proxies);
+    // Создаём экземпляр регистратора в зависимости от сервиса
+    let registrator;
+    if (service === 'cline') {
+        registrator = new ClineRegister(sessionId, proxies);
+        db.addLog(sessionId, 'info', `🤖 Запуск CLINE авторизации через Microsoft`);
+    } else {
+        registrator = new CursorRegister(sessionId, proxies);
+        db.addLog(sessionId, 'info', `🖱️ Запуск Cursor обработки в режиме: ${mode}`);
+    }
     
     // Сохраняем в активные сессии
     activeSessions.set(sessionId, { 
         registrator, 
         isRunning: true,
-        mode 
+        mode,
+        service
     });
-    
-    db.addLog(sessionId, 'info', `Запуск обработки в режиме: ${mode}`);
     
     try {
         // Получаем все аккаунты для обработки
@@ -263,25 +275,35 @@ async function startProcessing(sessionId, mode, proxies) {
             
             while (retries < maxRetries && !success) {
                 try {
-                    const result = await registrator.processAccount(account, mode);
+                    let result;
+                    
+                    if (service === 'cline') {
+                        // CLINE - только авторизация через Microsoft
+                        result = await registrator.loginWithMicrosoft(account.id, account.email, account.password);
+                    } else {
+                        // Cursor - регистрация или логин
+                        result = await registrator.processAccount(account, mode);
+                    }
                     
                     if (result.success) {
                         success = true;
                         successCount++;
-                    } else if (result.error?.includes('CAPTCHA') || result.error?.includes('rate')) {
-                        // Retry при CAPTCHA или rate limit
+                        db.addLog(sessionId, 'info', `✅ ${account.email} - успешно!`);
+                    } else if (result.error?.includes('CAPTCHA') || result.error?.includes('rate') || result.error?.includes('2FA')) {
+                        // Retry при определённых ошибках
                         retries++;
                         if (retries < maxRetries) {
-                            db.addLog(sessionId, 'warning', `Retry ${retries}/${maxRetries} для ${account.email}`);
-                            await new Promise(r => setTimeout(r, delay * 2)); // Увеличенная задержка
+                            db.addLog(sessionId, 'warning', `⏳ Retry ${retries}/${maxRetries} для ${account.email}`);
+                            await new Promise(r => setTimeout(r, delay * 2));
                         }
                     } else {
                         // Другие ошибки - не retry
+                        db.addLog(sessionId, 'error', `❌ ${account.email}: ${result.error || 'Неизвестная ошибка'}`);
                         break;
                     }
                 } catch (err) {
                     retries++;
-                    db.addLog(sessionId, 'error', `Ошибка обработки ${account.email}: ${err.message}`);
+                    db.addLog(sessionId, 'error', `❌ Ошибка ${account.email}: ${err.message}`);
                 }
             }
             
@@ -309,10 +331,10 @@ async function startProcessing(sessionId, mode, proxies) {
             status: 'completed',
             completed_at: new Date().toISOString()
         });
-        db.addLog(sessionId, 'info', `Сессия завершена. Успешно: ${successCount}, Ошибок: ${failedCount}`);
+        db.addLog(sessionId, 'info', `🏁 Сессия завершена. Успешно: ${successCount}, Ошибок: ${failedCount}`);
         
     } catch (error) {
-        db.addLog(sessionId, 'error', `Критическая ошибка: ${error.message}`);
+        db.addLog(sessionId, 'error', `💥 Критическая ошибка: ${error.message}`);
         db.updateSession(sessionId, {
             status: 'error',
             completed_at: new Date().toISOString()
@@ -413,35 +435,73 @@ app.get('/api/logs-poll/:sessionId', requireAuth, (req, res) => {
 });
 
 /**
- * Экспорт успешных аккаунтов в CSV
+ * Универсальный экспорт с параметрами
  */
 app.get('/api/export/:sessionId', requireAuth, async (req, res) => {
     const { sessionId } = req.params;
+    const { format = 'csv', filter = 'all' } = req.query;
     
-    const accounts = db.getSuccessAccountsForExport(sessionId);
+    let accounts = db.getSuccessAccountsForExport(sessionId);
     
     if (accounts.length === 0) {
         return res.status(404).json({ error: 'Нет успешных аккаунтов для экспорта' });
     }
     
-    // Создаём директорию для экспорта
+    // Фильтрация по типу сервиса
+    if (filter === 'cursor') {
+        accounts = accounts.filter(a => a.service_type === 'cursor' || !a.service_type);
+    } else if (filter === 'cline') {
+        accounts = accounts.filter(a => a.service_type === 'cline');
+    }
+    
+    const timestamp = Date.now();
+    
+    // Экспорт токенов (только для CLINE)
+    if (format === 'tokens') {
+        const tokensData = accounts
+            .filter(acc => acc.access_token || acc.session_token)
+            .map(acc => {
+                const token = acc.access_token || acc.session_token;
+                return `${acc.email}|${token}`;
+            })
+            .join('\n');
+        
+        if (!tokensData) {
+            return res.status(404).json({ error: 'Нет аккаунтов с токенами' });
+        }
+        
+        res.setHeader('Content-Type', 'text/plain');
+        res.setHeader('Content-Disposition', `attachment; filename="tokens_${sessionId.substring(0, 8)}_${timestamp}.txt"`);
+        return res.send(tokensData);
+    }
+    
+    // TXT формат
+    if (format === 'txt') {
+        const text = accounts.map(acc => `${acc.email}:${acc.password}`).join('\n');
+        res.setHeader('Content-Type', 'text/plain');
+        res.setHeader('Content-Disposition', `attachment; filename="accounts_${sessionId.substring(0, 8)}_${timestamp}.txt"`);
+        return res.send(text);
+    }
+    
+    // CSV формат (по умолчанию)
     const exportDir = path.join(__dirname, 'exports');
     if (!fs.existsSync(exportDir)) {
         fs.mkdirSync(exportDir, { recursive: true });
     }
     
-    const filename = `cursor_accounts_${sessionId.substring(0, 8)}_${Date.now()}.csv`;
+    const filename = `accounts_${sessionId.substring(0, 8)}_${timestamp}.csv`;
     const filepath = path.join(exportDir, filename);
     
-    // Создаём CSV файл
     const csvWriter = createObjectCsvWriter({
         path: filepath,
         header: [
             { id: 'email', title: 'Email' },
             { id: 'password', title: 'Password' },
+            { id: 'service_type', title: 'Service' },
             { id: 'full_name', title: 'Name' },
             { id: 'trial_status', title: 'Trial Status' },
-            { id: 'trial_days', title: 'Trial Days' },
+            { id: 'session_token', title: 'Session Token' },
+            { id: 'access_token', title: 'Access Token' },
             { id: 'created_at', title: 'Created At' }
         ]
     });
@@ -449,36 +509,11 @@ app.get('/api/export/:sessionId', requireAuth, async (req, res) => {
     await csvWriter.writeRecords(accounts);
     
     res.download(filepath, filename, (err) => {
-        if (err) {
-            console.error('Ошибка скачивания:', err);
-        }
-        // Удаляем файл после скачивания
+        if (err) console.error('Download error:', err);
         setTimeout(() => {
-            try {
-                fs.unlinkSync(filepath);
-            } catch (e) {}
+            try { fs.unlinkSync(filepath); } catch (e) {}
         }, 5000);
     });
-});
-
-/**
- * Экспорт в TXT формате
- */
-app.get('/api/export-txt/:sessionId', requireAuth, (req, res) => {
-    const { sessionId } = req.params;
-    
-    const accounts = db.getSuccessAccountsForExport(sessionId);
-    
-    if (accounts.length === 0) {
-        return res.status(404).json({ error: 'Нет успешных аккаунтов для экспорта' });
-    }
-    
-    // Формируем текст
-    const text = accounts.map(acc => `${acc.email}:${acc.password}`).join('\n');
-    
-    res.setHeader('Content-Type', 'text/plain');
-    res.setHeader('Content-Disposition', `attachment; filename="cursor_accounts_${sessionId.substring(0, 8)}.txt"`);
-    res.send(text);
 });
 
 /**

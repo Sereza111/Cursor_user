@@ -1,137 +1,208 @@
 /**
- * Cursor Mass Register - Клиентский JavaScript
- * Управление формой регистрации и отображение прогресса
+ * Account Mass Register - Клиентский JavaScript
+ * Поддержка Cursor AI и CLINE
  */
 
 // Глобальные переменные
 let currentSessionId = null;
-let eventSource = null;
 let pollingInterval = null;
+let currentService = 'cursor'; // 'cursor' или 'cline'
 
 // DOM элементы
-const registerForm = document.getElementById('registerForm');
-const accountsList = document.getElementById('accountsList');
-const fileInput = document.getElementById('fileInput');
-const proxyList = document.getElementById('proxyList');
-const startBtn = document.getElementById('startBtn');
-const stopBtn = document.getElementById('stopBtn');
-const activeSessionCard = document.getElementById('activeSessionCard');
-const progressBar = document.getElementById('progressBar');
-const progressText = document.getElementById('progressText');
-const statSuccess = document.getElementById('statSuccess');
-const statFailed = document.getElementById('statFailed');
-const statTrial = document.getElementById('statTrial');
-const logsContainer = document.getElementById('logsContainer');
-const exportButtons = document.getElementById('exportButtons');
-const exportCsvBtn = document.getElementById('exportCsvBtn');
-const exportTxtBtn = document.getElementById('exportTxtBtn');
-const toastEl = document.getElementById('liveToast');
-const toastBody = document.getElementById('toastBody');
-
-// Bootstrap Toast
-let toast = null;
-if (toastEl) {
-    toast = new bootstrap.Toast(toastEl);
-}
+document.addEventListener('DOMContentLoaded', () => {
+    initServiceSelect();
+    initModeSelect();
+    initForm();
+    initAccountsCounter();
+    initDragDrop();
+    initExportButtons();
+    
+    console.log('🚀 Account Mass Register Panel v2.0 loaded');
+});
 
 /**
- * Показать уведомление
+ * Инициализация выбора сервиса
  */
-function showToast(message, type = 'info') {
-    if (toastBody && toast) {
-        toastBody.textContent = message;
-        const header = toastEl.querySelector('.toast-header i');
-        if (header) {
-            header.className = `bi bi-${type === 'error' ? 'exclamation-circle' : 'info-circle'} text-${type === 'error' ? 'danger' : 'primary'} me-2`;
-        }
-        toast.show();
-    }
-}
-
-/**
- * Обработка загрузки файла
- */
-if (fileInput) {
-    fileInput.addEventListener('change', async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        
-        try {
-            const text = await file.text();
-            accountsList.value = text;
-            showToast(`Загружено ${text.split('\n').filter(l => l.trim()).length} строк`);
-        } catch (err) {
-            showToast('Ошибка чтения файла', 'error');
-        }
+function initServiceSelect() {
+    const serviceOptions = document.querySelectorAll('.service-option');
+    const cursorModeSelect = document.getElementById('cursorModeSelect');
+    const clineModeSelect = document.getElementById('clineModeSelect');
+    const clineHint = document.getElementById('clineHint');
+    const accountsLabel = document.getElementById('accountsLabel');
+    const accountsHint = document.getElementById('accountsHint');
+    const trialLabel = document.getElementById('trialLabel');
+    
+    serviceOptions.forEach(option => {
+        option.addEventListener('click', () => {
+            // Убираем active со всех
+            serviceOptions.forEach(o => o.classList.remove('active'));
+            // Добавляем active на текущий
+            option.classList.add('active');
+            
+            // Устанавливаем radio
+            const radio = option.querySelector('input[type="radio"]');
+            if (radio) radio.checked = true;
+            
+            // Определяем выбранный сервис
+            currentService = option.dataset.service;
+            
+            // Переключаем UI
+            if (currentService === 'cline') {
+                if (cursorModeSelect) cursorModeSelect.style.display = 'none';
+                if (clineModeSelect) clineModeSelect.style.display = 'flex';
+                if (clineHint) clineHint.style.display = 'block';
+                if (accountsLabel) accountsLabel.textContent = 'Microsoft/Outlook аккаунты';
+                if (accountsHint) accountsHint.textContent = 'Формат: outlook_email@outlook.com:password';
+                if (trialLabel) trialLabel.textContent = 'С токеном';
+            } else {
+                if (cursorModeSelect) cursorModeSelect.style.display = 'flex';
+                if (clineModeSelect) clineModeSelect.style.display = 'none';
+                if (clineHint) clineHint.style.display = 'none';
+                if (accountsLabel) accountsLabel.textContent = 'Список аккаунтов';
+                if (accountsHint) accountsHint.textContent = 'Формат: email:password (один аккаунт на строку)';
+                if (trialLabel) trialLabel.textContent = 'С Trial';
+            }
+            
+            addLog('info', `Выбран сервис: ${currentService.toUpperCase()}`);
+        });
     });
 }
 
 /**
- * Отправка формы регистрации
+ * Инициализация выбора режима
  */
-if (registerForm) {
+function initModeSelect() {
+    const modeOptions = document.querySelectorAll('.mode-option');
+    
+    modeOptions.forEach(option => {
+        option.addEventListener('click', () => {
+            // Убираем active с соседних options в том же контейнере
+            const parent = option.parentElement;
+            parent.querySelectorAll('.mode-option').forEach(o => o.classList.remove('active'));
+            option.classList.add('active');
+            
+            const radio = option.querySelector('input[type="radio"]');
+            if (radio) radio.checked = true;
+        });
+    });
+}
+
+/**
+ * Инициализация формы
+ */
+function initForm() {
+    const registerForm = document.getElementById('registerForm');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    
+    if (!registerForm) return;
+    
     registerForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         
+        const accountsList = document.getElementById('accountsList');
+        const proxyList = document.getElementById('proxyList');
+        
         const accounts = accountsList.value.trim();
         if (!accounts) {
-            showToast('Введите список аккаунтов', 'error');
+            addLog('error', 'Введите список аккаунтов!');
             return;
         }
         
-        const mode = document.querySelector('input[name="mode"]:checked').value;
-        const proxies = proxyList.value.trim();
+        // Определяем режим
+        let mode = 'register';
+        if (currentService === 'cursor') {
+            const modeRadio = document.querySelector('input[name="mode"]:checked');
+            mode = modeRadio ? modeRadio.value : 'register';
+        } else {
+            mode = 'login'; // CLINE всегда login
+        }
+        
+        const proxies = proxyList ? proxyList.value.trim() : '';
         
         // Блокируем кнопку
         startBtn.disabled = true;
-        startBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Запуск...';
+        startBtn.innerHTML = '⏳ Запуск...';
+        stopBtn.disabled = false;
         
         try {
             const response = await fetch('/api/start', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ accounts, mode, proxies })
+                body: JSON.stringify({ 
+                    accounts, 
+                    mode, 
+                    proxies,
+                    service: currentService 
+                })
             });
             
             const data = await response.json();
             
             if (data.success) {
                 currentSessionId = data.sessionId;
-                showToast(`Сессия запущена! Аккаунтов: ${data.totalAccounts}`);
+                addLog('success', `✅ Сессия запущена! ID: ${data.sessionId}, Аккаунтов: ${data.totalAccounts}`);
                 startSession(data.sessionId, data.totalAccounts);
             } else {
                 throw new Error(data.error || 'Неизвестная ошибка');
             }
         } catch (err) {
-            showToast(err.message, 'error');
+            addLog('error', `❌ Ошибка: ${err.message}`);
             startBtn.disabled = false;
-            startBtn.innerHTML = '<i class="bi bi-play-fill me-2"></i>Запустить регистрацию';
+            startBtn.innerHTML = '⚔ Запустить обработку';
+            stopBtn.disabled = true;
         }
     });
+    
+    // Кнопка остановки
+    if (stopBtn) {
+        stopBtn.addEventListener('click', async () => {
+            if (!currentSessionId) return;
+            
+            if (!confirm('Остановить текущую сессию?')) return;
+            
+            stopBtn.disabled = true;
+            
+            try {
+                const response = await fetch(`/api/stop/${currentSessionId}`, { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.success) {
+                    addLog('warning', '⏹️ Сессия останавливается...');
+                } else {
+                    throw new Error(data.error);
+                }
+            } catch (err) {
+                addLog('error', `❌ Ошибка: ${err.message}`);
+                stopBtn.disabled = false;
+            }
+        });
+    }
 }
 
 /**
  * Запуск отслеживания сессии
  */
 function startSession(sessionId, totalAccounts) {
-    // Показываем карточку активной сессии
-    if (activeSessionCard) {
-        activeSessionCard.style.display = 'block';
-    }
+    // Показываем секции
+    document.getElementById('statsSection').style.display = 'grid';
+    document.getElementById('progressSection').style.display = 'block';
+    document.getElementById('resultsSection').style.display = 'block';
     
-    // Обновляем прогресс
+    // Обновляем статистику
+    document.getElementById('statTotal').textContent = totalAccounts;
+    document.getElementById('statProcessed').textContent = '0';
+    document.getElementById('statSuccess').textContent = '0';
+    document.getElementById('statFailed').textContent = '0';
+    document.getElementById('statTrial').textContent = '0';
+    
+    // Сбрасываем прогресс
     updateProgress(0, totalAccounts);
     
-    // Очищаем логи
-    if (logsContainer) {
-        logsContainer.innerHTML = '<div class="log-line text-success">🚀 Сессия запущена...</div>';
-    }
+    // Очищаем таблицу
+    document.getElementById('resultsTable').innerHTML = '';
     
-    // Обновляем ссылки экспорта
-    if (exportCsvBtn) exportCsvBtn.href = `/api/export/${sessionId}`;
-    if (exportTxtBtn) exportTxtBtn.href = `/api/export-txt/${sessionId}`;
-    
-    // Запускаем polling статуса
+    // Запускаем polling
     startPolling(sessionId);
 }
 
@@ -141,104 +212,53 @@ function startSession(sessionId, totalAccounts) {
 function updateProgress(processed, total) {
     const percent = total > 0 ? Math.round((processed / total) * 100) : 0;
     
-    if (progressBar) {
-        progressBar.style.width = `${percent}%`;
-        progressBar.setAttribute('aria-valuenow', percent);
-    }
+    const progressBar = document.getElementById('progressBar');
+    const progressText = document.getElementById('progressText');
+    const progressPercent = document.getElementById('progressPercent');
     
-    if (progressText) {
-        progressText.textContent = `${processed} / ${total}`;
-    }
-}
-
-/**
- * Обновление статистики
- */
-function updateStats(stats) {
-    if (statSuccess) statSuccess.textContent = stats.success || 0;
-    if (statFailed) statFailed.textContent = stats.failed || 0;
-    if (statTrial) statTrial.textContent = stats.with_trial || 0;
-}
-
-/**
- * Добавление лога
- */
-function addLog(log) {
-    if (!logsContainer) return;
-    
-    const logLine = document.createElement('div');
-    logLine.className = 'log-line';
-    
-    const time = new Date(log.created_at).toLocaleTimeString('ru-RU');
-    let icon = '📝';
-    let colorClass = '';
-    
-    switch (log.level) {
-        case 'error':
-            icon = '❌';
-            colorClass = 'text-danger';
-            break;
-        case 'warning':
-            icon = '⚠️';
-            colorClass = 'text-warning';
-            break;
-        case 'info':
-            if (log.message.includes('✅') || log.message.includes('успе')) {
-                icon = '✅';
-                colorClass = 'text-success';
-            } else {
-                icon = 'ℹ️';
-                colorClass = 'text-info';
-            }
-            break;
-    }
-    
-    logLine.innerHTML = `<span class="text-muted">[${time}]</span> ${icon} <span class="${colorClass}">${escapeHtml(log.message)}</span>`;
-    logsContainer.appendChild(logLine);
-    
-    // Автопрокрутка вниз
-    logsContainer.scrollTop = logsContainer.scrollHeight;
-}
-
-/**
- * Экранирование HTML
- */
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+    if (progressBar) progressBar.style.width = `${percent}%`;
+    if (progressText) progressText.textContent = `Обработано: ${processed} из ${total}`;
+    if (progressPercent) progressPercent.textContent = `${percent}%`;
 }
 
 /**
  * Polling статуса сессии
  */
 function startPolling(sessionId) {
-    let lastLogId = 0;
+    let lastLogCount = 0;
     
     pollingInterval = setInterval(async () => {
         try {
-            // Получаем статус
-            const statusRes = await fetch(`/api/status/${sessionId}`);
-            const statusData = await statusRes.json();
+            const response = await fetch(`/api/status/${sessionId}`);
+            const data = await response.json();
             
-            if (statusData.error) {
-                throw new Error(statusData.error);
+            if (data.error) {
+                throw new Error(data.error);
             }
             
+            const session = data.session;
+            const stats = data.stats;
+            const accounts = data.accounts || [];
+            
+            // Обновляем статистику
+            document.getElementById('statProcessed').textContent = stats.success + stats.failed;
+            document.getElementById('statSuccess').textContent = stats.success;
+            document.getElementById('statFailed').textContent = stats.failed;
+            document.getElementById('statTrial').textContent = stats.with_trial || 0;
+            
             // Обновляем прогресс
-            const session = statusData.session;
-            const stats = statusData.stats;
+            updateProgress(stats.success + stats.failed, session.total_accounts);
             
-            updateProgress(session.processed || 0, session.total_accounts);
-            updateStats(stats);
+            // Обновляем таблицу
+            updateResultsTable(accounts);
             
-            // Получаем новые логи
-            const logsRes = await fetch(`/api/logs-poll/${sessionId}?lastId=${lastLogId}`);
-            const logsData = await logsRes.json();
-            
-            if (logsData.logs && logsData.logs.length > 0) {
-                logsData.logs.forEach(log => addLog(log));
-                lastLogId = logsData.logs[logsData.logs.length - 1].id;
+            // Добавляем новые логи
+            if (data.logs && data.logs.length > lastLogCount) {
+                const newLogs = data.logs.slice(lastLogCount);
+                newLogs.forEach(log => {
+                    addLog(log.level, log.message);
+                });
+                lastLogCount = data.logs.length;
             }
             
             // Проверяем завершение
@@ -261,118 +281,157 @@ function stopPolling() {
         clearInterval(pollingInterval);
         pollingInterval = null;
     }
-    if (eventSource) {
-        eventSource.close();
-        eventSource = null;
-    }
 }
+
+/**
+ * Обновление таблицы результатов
+ */
+function updateResultsTable(accounts) {
+    const tbody = document.getElementById('resultsTable');
+    if (!tbody) return;
+    
+    tbody.innerHTML = accounts.map((acc, idx) => {
+        const statusClass = acc.status === 'success' ? 'status-success' : 
+                           acc.status === 'failed' ? 'status-failed' :
+                           acc.status === 'processing' ? 'status-processing' : 'status-pending';
+        
+        const serviceClass = (acc.service_type || 'cursor') === 'cline' ? 'cline' : 'cursor';
+        const serviceName = (acc.service_type || 'cursor').toUpperCase();
+        
+        const hasToken = acc.session_token || acc.access_token;
+        const tokenDisplay = hasToken ? 
+            `<span class="token-cell has-token" title="${escapeHtml(acc.session_token || acc.access_token || '')}" onclick="copyToken(this)">${(acc.session_token || acc.access_token || '').substring(0, 20)}...</span>` :
+            '<span class="token-cell no-token">-</span>';
+        
+        return `
+            <tr>
+                <td>${idx + 1}</td>
+                <td>${escapeHtml(acc.email)}</td>
+                <td><span class="service-badge ${serviceClass}">${serviceName}</span></td>
+                <td><span class="status-badge ${statusClass}">${acc.status}</span></td>
+                <td>${tokenDisplay}</td>
+                <td class="text-muted" style="max-width: 200px; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(acc.error_message || '-')}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+/**
+ * Копирование токена
+ */
+window.copyToken = function(element) {
+    const token = element.title;
+    navigator.clipboard.writeText(token).then(() => {
+        element.classList.add('copied');
+        setTimeout(() => element.classList.remove('copied'), 1000);
+        addLog('info', '📋 Токен скопирован в буфер обмена');
+    });
+};
 
 /**
  * Обработка завершения сессии
  */
 function onSessionComplete(status) {
-    // Обновляем кнопку
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    
     if (startBtn) {
         startBtn.disabled = false;
-        startBtn.innerHTML = '<i class="bi bi-play-fill me-2"></i>Запустить регистрацию';
+        startBtn.innerHTML = '⚔ Запустить обработку';
     }
     
-    // Скрываем кнопку остановки
     if (stopBtn) {
-        stopBtn.style.display = 'none';
-    }
-    
-    // Показываем кнопки экспорта
-    if (exportButtons) {
-        exportButtons.style.display = 'flex';
-        exportButtons.style.cssText = 'display: flex !important;';
-    }
-    
-    // Убираем анимацию прогресс-бара
-    if (progressBar) {
-        progressBar.classList.remove('progress-bar-animated');
-        if (status === 'completed') {
-            progressBar.classList.remove('bg-primary');
-            progressBar.classList.add('bg-success');
-        } else if (status === 'error') {
-            progressBar.classList.remove('bg-primary');
-            progressBar.classList.add('bg-danger');
-        }
-    }
-    
-    // Показываем уведомление
-    if (status === 'completed') {
-        showToast('Сессия успешно завершена!');
-        addLog({ level: 'info', message: '🎉 Сессия завершена!', created_at: new Date().toISOString() });
-    } else if (status === 'stopped') {
-        showToast('Сессия остановлена');
-        addLog({ level: 'warning', message: '⏹️ Сессия остановлена пользователем', created_at: new Date().toISOString() });
-    } else {
-        showToast('Сессия завершилась с ошибкой', 'error');
-        addLog({ level: 'error', message: '💥 Сессия завершилась с ошибкой', created_at: new Date().toISOString() });
-    }
-}
-
-/**
- * Остановка сессии
- */
-if (stopBtn) {
-    stopBtn.addEventListener('click', async () => {
-        if (!currentSessionId) return;
-        
-        if (!confirm('Остановить текущую сессию?')) return;
-        
         stopBtn.disabled = true;
-        
-        try {
-            const response = await fetch(`/api/stop/${currentSessionId}`, { method: 'POST' });
-            const data = await response.json();
-            
-            if (data.success) {
-                showToast('Сессия останавливается...');
-            } else {
-                throw new Error(data.error);
-            }
-        } catch (err) {
-            showToast(err.message, 'error');
-            stopBtn.disabled = false;
-        }
-    });
+    }
+    
+    if (status === 'completed') {
+        addLog('success', '🎉 Сессия успешно завершена!');
+    } else if (status === 'stopped') {
+        addLog('warning', '⏹️ Сессия остановлена');
+    } else {
+        addLog('error', '💥 Сессия завершилась с ошибкой');
+    }
 }
 
 /**
- * Подсчёт аккаунтов при вводе
+ * Добавление лога в контейнер
  */
-if (accountsList) {
+function addLog(level, message) {
+    const logContainer = document.getElementById('logContainer');
+    if (!logContainer) return;
+    
+    const time = new Date().toLocaleTimeString('ru-RU');
+    let icon = 'ℹ️';
+    let levelClass = 'info';
+    
+    switch (level) {
+        case 'error':
+            icon = '❌';
+            levelClass = 'error';
+            break;
+        case 'warning':
+            icon = '⚠️';
+            levelClass = 'warning';
+            break;
+        case 'success':
+            icon = '✅';
+            levelClass = 'success';
+            break;
+    }
+    
+    const logEntry = document.createElement('div');
+    logEntry.className = 'log-entry fade-in';
+    logEntry.innerHTML = `
+        <span class="log-time">${time}</span>
+        <span class="log-level ${levelClass}">${icon}</span>
+        <span class="log-message">${escapeHtml(message)}</span>
+    `;
+    
+    logContainer.appendChild(logEntry);
+    logContainer.scrollTop = logContainer.scrollHeight;
+}
+
+/**
+ * Счётчик аккаунтов
+ */
+function initAccountsCounter() {
+    const accountsList = document.getElementById('accountsList');
+    if (!accountsList) return;
+    
     accountsList.addEventListener('input', () => {
         const lines = accountsList.value.split('\n').filter(l => l.trim() && l.includes(':'));
-        const countBadge = document.getElementById('accountsCount');
-        if (!countBadge) {
-            const badge = document.createElement('span');
-            badge.id = 'accountsCount';
-            badge.className = 'badge bg-primary ms-2';
-            accountsList.parentElement.querySelector('label').appendChild(badge);
+        const label = document.getElementById('accountsLabel');
+        if (label) {
+            const countSpan = label.querySelector('.count') || document.createElement('span');
+            countSpan.className = 'count';
+            countSpan.style.cssText = 'float: right; color: var(--text-muted);';
+            countSpan.textContent = `(${lines.length} шт.)`;
+            if (!label.querySelector('.count')) {
+                label.appendChild(countSpan);
+            }
         }
-        document.getElementById('accountsCount').textContent = `${lines.length} аккаунтов`;
     });
 }
 
 /**
- * Drag & Drop для файлов
+ * Drag & Drop
  */
-if (accountsList) {
+function initDragDrop() {
+    const accountsList = document.getElementById('accountsList');
+    if (!accountsList) return;
+    
     accountsList.addEventListener('dragover', (e) => {
         e.preventDefault();
-        accountsList.classList.add('border-primary');
+        accountsList.style.borderColor = 'var(--success)';
     });
     
     accountsList.addEventListener('dragleave', () => {
-        accountsList.classList.remove('border-primary');
+        accountsList.style.borderColor = '';
     });
     
     accountsList.addEventListener('drop', async (e) => {
         e.preventDefault();
-        accountsList.classList.remove('border-primary');
+        accountsList.style.borderColor = '';
         
         const file = e.dataTransfer.files[0];
         if (file && (file.name.endsWith('.txt') || file.name.endsWith('.csv'))) {
@@ -380,19 +439,67 @@ if (accountsList) {
                 const text = await file.text();
                 accountsList.value = text;
                 accountsList.dispatchEvent(new Event('input'));
-                showToast(`Загружен файл: ${file.name}`);
+                addLog('info', `📁 Загружен файл: ${file.name}`);
             } catch (err) {
-                showToast('Ошибка чтения файла', 'error');
+                addLog('error', `Ошибка чтения файла: ${err.message}`);
             }
-        } else {
-            showToast('Поддерживаются только .txt и .csv файлы', 'error');
         }
     });
+}
+
+/**
+ * Кнопки экспорта
+ */
+function initExportButtons() {
+    const exportCsvBtn = document.getElementById('exportCsvBtn');
+    const exportTxtBtn = document.getElementById('exportTxtBtn');
+    const exportSuccessBtn = document.getElementById('exportSuccessBtn');
+    const exportTokensBtn = document.getElementById('exportTokensBtn');
+    
+    if (exportCsvBtn) {
+        exportCsvBtn.addEventListener('click', () => {
+            if (currentSessionId) {
+                window.location.href = `/api/export/${currentSessionId}?format=csv`;
+            }
+        });
+    }
+    
+    if (exportTxtBtn) {
+        exportTxtBtn.addEventListener('click', () => {
+            if (currentSessionId) {
+                window.location.href = `/api/export/${currentSessionId}?format=txt`;
+            }
+        });
+    }
+    
+    if (exportSuccessBtn) {
+        exportSuccessBtn.addEventListener('click', () => {
+            if (currentSessionId) {
+                window.location.href = `/api/export/${currentSessionId}?format=txt&filter=success`;
+            }
+        });
+    }
+    
+    if (exportTokensBtn) {
+        exportTokensBtn.addEventListener('click', () => {
+            if (currentSessionId) {
+                window.location.href = `/api/export/${currentSessionId}?format=tokens`;
+            }
+        });
+    }
+}
+
+/**
+ * Экранирование HTML
+ */
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
 }
 
 // Очистка при закрытии страницы
 window.addEventListener('beforeunload', () => {
     stopPolling();
 });
-
-console.log('🚀 Cursor Mass Register Panel loaded');

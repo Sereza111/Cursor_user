@@ -430,6 +430,152 @@ select.form-control {
 }
 
 /* ============================================
+   SERVICE SELECT (Выбор сервиса)
+   ============================================ */
+.service-select {
+    margin-bottom: 25px;
+}
+
+.service-options {
+    display: flex;
+    gap: 15px;
+    margin-top: 10px;
+}
+
+.service-option {
+    flex: 1;
+    padding: 20px;
+    background: var(--bg-input);
+    border: 2px solid var(--border-secondary);
+    cursor: pointer;
+    transition: var(--transition);
+    text-align: center;
+    position: relative;
+}
+
+.service-option:hover {
+    border-color: var(--border-accent);
+    background: var(--bg-hover);
+}
+
+.service-option.active {
+    background: linear-gradient(135deg, #1a2a1a 0%, #141d14 100%);
+    border-color: var(--success);
+    box-shadow: inset 0 0 15px rgba(74, 124, 74, 0.2), 0 0 10px rgba(74, 124, 74, 0.1);
+}
+
+.service-option.active::after {
+    content: '✓';
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    color: var(--success-light);
+    font-size: 14px;
+    font-weight: bold;
+}
+
+.service-option input {
+    display: none;
+}
+
+.service-option .service-icon {
+    font-size: 32px;
+    display: block;
+    margin-bottom: 12px;
+}
+
+.service-option .service-title {
+    font-family: var(--font-heading);
+    font-size: 1.1rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-accent);
+    display: block;
+    margin-bottom: 8px;
+}
+
+.service-option .service-desc {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    display: block;
+}
+
+.service-option.active .service-title {
+    color: var(--success-light);
+}
+
+/* Token display in table */
+.token-cell {
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: 'Consolas', monospace;
+    font-size: 0.75rem;
+}
+
+.token-cell.has-token {
+    color: var(--success-light);
+    cursor: pointer;
+}
+
+.token-cell.has-token:hover {
+    background: rgba(74, 124, 74, 0.2);
+}
+
+.token-cell.no-token {
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+/* Copy button */
+.copy-btn {
+    padding: 3px 8px;
+    font-size: 11px;
+    background: var(--bg-input);
+    border: 1px solid var(--border-secondary);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.copy-btn:hover {
+    background: var(--bg-hover);
+    border-color: var(--border-accent);
+    color: var(--text-accent);
+}
+
+.copy-btn.copied {
+    background: var(--success);
+    border-color: var(--success-light);
+    color: white;
+}
+
+/* Service badge */
+.service-badge {
+    display: inline-block;
+    padding: 3px 8px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border: 1px solid;
+}
+
+.service-badge.cursor {
+    color: #8ab8d8;
+    border-color: #4a6a7c;
+    background: rgba(74, 106, 124, 0.2);
+}
+
+.service-badge.cline {
+    color: #d8b88a;
+    border-color: #7c6a4a;
+    background: rgba(124, 106, 74, 0.2);
+}
+
+/* ============================================
    STATS SECTION
    ============================================ */
 .stats {
