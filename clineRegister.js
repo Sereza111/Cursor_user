@@ -229,6 +229,249 @@ class ClineRegister {
     }
 
     /**
+     * Безопасное выполнение действия с обработкой навигации
+     */
+    async safeAction(action, description = 'action') {
+        try {
+            return await action();
+        } catch (error) {
+            if (error.message.includes('Execution context was destroyed') ||
+                error.message.includes('navigation') ||
+                error.message.includes('detached')) {
+                this.log('info', `⚡ Навигация произошла во время: ${description}`);
+                await this.humanDelay(2000, 3000);
+                return null;
+            }
+            throw error;
+        }
+    }
+
+    /**
+     * Обработка диалогов Microsoft (Stay signed in?, permissions, etc.)
+     */
+    async handleMicrosoftDialogs() {
+        this.log('info', '🔄 Проверяем наличие диалогов Microsoft...');
+        
+        let dialogsHandled = 0;
+        const maxDialogs = 5; // Максимум диалогов для обработки
+        
+        for (let i = 0; i < maxDialogs; i++) {
+            try {
+                await this.humanDelay(2000, 3000);
+                
+                const currentUrl = this.page.url();
+                this.log('info', `📍 URL: ${currentUrl}`);
+                
+                // Если уже на CLINE - выходим
+                if (currentUrl.includes('cline.bot') || currentUrl.includes('dashboard')) {
+                    this.log('info', '✅ Уже на CLINE, диалоги обработаны');
+                    break;
+                }
+                
+                // Получаем текст страницы безопасно
+                const pageContent = await this.safeAction(async () => {
+                    return await this.page.evaluate(() => ({
+                        text: document.body.innerText.toLowerCase(),
+                        title: document.title.toLowerCase()
+                    }));
+                }, 'получение контента страницы');
+                
+                if (!pageContent) continue;
+                
+                const { text, title } = pageContent;
+                
+                // ==========================================
+                // Диалог 1: "Stay signed in?"
+                // ==========================================
+                if (text.includes('stay signed in') || text.includes('оставаться в системе') || 
+                    title.includes('stay signed in')) {
+                    this.log('info', '📋 Найден диалог "Stay signed in?"');
+                    
+                    // Нажимаем "No" (не оставаться в сессии)
+                    const noClicked = await this.safeAction(async () => {
+                        return await this.page.evaluate(() => {
+                            // Ищем кнопку "No"
+                            const noSelectors = [
+                                '#idBtn_Back',
+                                'button[id*="Back"]',
+                                'input[value="No"]',
+                                'button:contains("No")'
+                            ];
+                            
+                            for (const selector of noSelectors) {
+                                const btn = document.querySelector(selector);
+                                if (btn) {
+                                    btn.click();
+                                    return true;
+                                }
+                            }
+                            
+                            // Ищем по тексту
+                            const buttons = document.querySelectorAll('button, input[type="submit"], input[type="button"]');
+                            for (const btn of buttons) {
+                                const btnText = (btn.textContent || btn.value || '').toLowerCase();
+                                if (btnText === 'no' || btnText === 'нет') {
+                                    btn.click();
+                                    return true;
+                                }
+                            }
+                            return false;
+                        });
+                    }, 'нажатие No');
+                    
+                    if (noClicked) {
+                        this.log('info', '✅ Нажали "No" на "Stay signed in?"');
+                        dialogsHandled++;
+                        await this.humanDelay(3000, 5000);
+                        continue;
+                    }
+                }
+                
+                // ==========================================
+                // Диалог 2: Запрос разрешений (Permissions/Consent)
+                // ==========================================
+                if (text.includes('permission') || text.includes('consent') || 
+                    text.includes('access') || text.includes('allow') ||
+                    text.includes('approve') || text.includes('разрешения')) {
+                    this.log('info', '📋 Найден диалог разрешений');
+                    
+                    const acceptClicked = await this.safeAction(async () => {
+                        return await this.page.evaluate(() => {
+                            const acceptSelectors = [
+                                '#idSIButton9',
+                                '#idBtn_Accept',
+                                'input[value="Accept"]',
+                                'input[value="Yes"]',
+                                'button[type="submit"]'
+                            ];
+                            
+                            for (const selector of acceptSelectors) {
+                                const btn = document.querySelector(selector);
+                                if (btn) {
+                                    btn.click();
+                                    return true;
+                                }
+                            }
+                            
+                            // Ищем по тексту
+                            const buttons = document.querySelectorAll('button, input[type="submit"]');
+                            for (const btn of buttons) {
+                                const btnText = (btn.textContent || btn.value || '').toLowerCase();
+                                if (btnText.includes('accept') || btnText.includes('yes') || 
+                                    btnText.includes('allow') || btnText.includes('continue') ||
+                                    btnText.includes('принять') || btnText.includes('да')) {
+                                    btn.click();
+                                    return true;
+                                }
+                            }
+                            return false;
+                        });
+                    }, 'принятие разрешений');
+                    
+                    if (acceptClicked) {
+                        this.log('info', '✅ Приняли разрешения');
+                        dialogsHandled++;
+                        await this.humanDelay(3000, 5000);
+                        continue;
+                    }
+                }
+                
+                // ==========================================
+                // Диалог 3: "Don't show this again" / "Keep me signed in"
+                // ==========================================
+                if (text.includes("don't show") || text.includes('keep me signed') ||
+                    text.includes('remember')) {
+                    this.log('info', '📋 Найден диалог "Don\'t show this again"');
+                    
+                    const dismissed = await this.safeAction(async () => {
+                        return await this.page.evaluate(() => {
+                            // Снимаем галочку если есть
+                            const checkbox = document.querySelector('input[type="checkbox"]');
+                            if (checkbox && checkbox.checked) {
+                                checkbox.click();
+                            }
+                            
+                            // Нажимаем No/Cancel
+                            const buttons = document.querySelectorAll('button, input[type="submit"], input[type="button"]');
+                            for (const btn of buttons) {
+                                const btnText = (btn.textContent || btn.value || '').toLowerCase();
+                                if (btnText === 'no' || btnText.includes('cancel') || btnText.includes('skip')) {
+                                    btn.click();
+                                    return true;
+                                }
+                            }
+                            
+                            // Если нет кнопки No, нажимаем submit
+                            const submitBtn = document.querySelector('#idSIButton9, button[type="submit"]');
+                            if (submitBtn) {
+                                submitBtn.click();
+                                return true;
+                            }
+                            return false;
+                        });
+                    }, 'закрытие диалога');
+                    
+                    if (dismissed) {
+                        this.log('info', '✅ Закрыли диалог');
+                        dialogsHandled++;
+                        await this.humanDelay(3000, 5000);
+                        continue;
+                    }
+                }
+                
+                // Если ничего не найдено - пробуем общий submit
+                if (currentUrl.includes('login.live.com') || currentUrl.includes('login.microsoftonline.com')) {
+                    this.log('info', '🔍 Проверяем наличие кнопок на странице...');
+                    
+                    const anyClicked = await this.safeAction(async () => {
+                        return await this.page.evaluate(() => {
+                            // Приоритет кнопкам No/Back
+                            const backBtn = document.querySelector('#idBtn_Back');
+                            if (backBtn) {
+                                backBtn.click();
+                                return 'back';
+                            }
+                            
+                            // Потом submit
+                            const submitBtn = document.querySelector('#idSIButton9');
+                            if (submitBtn) {
+                                submitBtn.click();
+                                return 'submit';
+                            }
+                            
+                            return false;
+                        });
+                    }, 'клик по кнопке');
+                    
+                    if (anyClicked) {
+                        this.log('info', `✅ Нажали кнопку: ${anyClicked}`);
+                        dialogsHandled++;
+                        await this.humanDelay(3000, 5000);
+                        continue;
+                    }
+                }
+                
+                // Если никаких диалогов не найдено - выходим
+                this.log('info', '📋 Диалогов больше не найдено');
+                break;
+                
+            } catch (error) {
+                if (error.message.includes('Execution context was destroyed') ||
+                    error.message.includes('navigation')) {
+                    this.log('info', '⚡ Навигация, ждём...');
+                    await this.humanDelay(2000, 3000);
+                    continue;
+                }
+                this.log('warning', `⚠️ Ошибка обработки диалога: ${error.message}`);
+                break;
+            }
+        }
+        
+        this.log('info', `📊 Обработано диалогов: ${dialogsHandled}`);
+        return dialogsHandled;
+    }
+
+    /**
      * Авторизация через Microsoft (Outlook)
      * @param {string} email - Outlook email
      * @param {string} password - Пароль от Outlook
@@ -490,42 +733,7 @@ class ClineRegister {
                 // ==========================================
                 // ЭТАП 5: Обработка "Stay signed in?" и других окон
                 // ==========================================
-                const afterLoginUrl = this.page.url();
-                this.log('info', `📍 URL после логина: ${afterLoginUrl}`);
-
-                // Проверяем на "Stay signed in?"
-                const staySignedIn = await this.page.$('#idBtn_Back, #idSIButton9');
-                if (staySignedIn) {
-                    this.log('info', '🔄 Обрабатываем "Stay signed in?"...');
-                    
-                    // Нажимаем "No" или "Yes" в зависимости от настроек
-                    const noBtn = await this.page.$('#idBtn_Back');
-                    if (noBtn) {
-                        await noBtn.click();
-                        this.log('info', 'Нажали "No"');
-                    } else {
-                        const yesBtn = await this.page.$('#idSIButton9');
-                        if (yesBtn) {
-                            await yesBtn.click();
-                            this.log('info', 'Нажали "Yes"');
-                        }
-                    }
-                    
-                    await this.humanDelay(3000, 5000);
-                }
-
-                // Проверяем на запрос разрешений (permissions consent)
-                const consentBtn = await this.page.$('#idSIButton9, button[type="submit"]');
-                if (consentBtn) {
-                    const pageText = await this.page.evaluate(() => document.body.innerText);
-                    if (pageText.toLowerCase().includes('permission') || 
-                        pageText.toLowerCase().includes('accept') ||
-                        pageText.toLowerCase().includes('consent')) {
-                        this.log('info', '🔄 Принимаем разрешения...');
-                        await consentBtn.click();
-                        await this.humanDelay(3000, 5000);
-                    }
-                }
+                await this.handleMicrosoftDialogs();
             }
 
             // ==========================================
