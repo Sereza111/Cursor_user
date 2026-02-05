@@ -1,6 +1,6 @@
 # ⚜ Cursor Mass Register Panel
 
-Веб-панель для массовой регистрации и проверки аккаунтов Cursor AI с готическим интерфейсом.
+Веб-панель для массовой регистрации аккаунтов Cursor AI и авторизации CLINE через Microsoft OAuth с готическим интерфейсом и встроенным VNC просмотром.
 
 ![Gothic Theme](https://img.shields.io/badge/Theme-Gothic-black)
 ![Node.js](https://img.shields.io/badge/Node.js-18+-green)
@@ -9,10 +9,14 @@
 ## 📋 Возможности
 
 - 📝 **Массовая регистрация** аккаунтов Cursor AI
-- 🔑 **Вход и проверка** статуса Pro Trial (7 дней)
-- 🎭 **Stealth режим** - обход обнаружения автоматизации через Puppeteer
+- 🔑 **Авторизация CLINE** через Microsoft OAuth (Outlook аккаунты)
+- 🎫 **Извлечение токенов** CLINE для API доступа
+- 💰 **Проверка баланса** кредитов аккаунта
+- 🖥️ **VNC Viewer** - просмотр браузера прямо в панели
+- 🎭 **Stealth режим** - обход обнаружения автоматизации
 - 👤 **Генерация имён** - 100+ рандомных имён и фамилий
 - 📊 **Прогресс в реалтайме** - логи, статистика, прогресс-бар
+- 📧 **Авто-верификация email** - чтение кодов через IMAP
 - 💾 **SQLite база данных** - хранение всех результатов
 - 📤 **Экспорт** в CSV/TXT форматы
 - 🔐 **Авторизация** для доступа к панели
@@ -20,7 +24,7 @@
 
 ## 🚀 Быстрый старт
 
-### Локальный запуск
+### Локальный запуск (Windows/Mac)
 
 ```bash
 # 1. Клонирование репозитория
@@ -42,6 +46,35 @@ npm start
 
 Логин по умолчанию: `admin` / `admin123`
 
+### Запуск на Linux сервере (с VNC)
+
+```bash
+# 1. Клонирование репозитория
+git clone https://github.com/Sereza111/Cursor_user.git
+cd Cursor_user
+
+# 2. Установка зависимостей
+npm install
+
+# 3. Установка пакетов для VNC
+apt install -y xvfb x11vnc fluxbox
+
+# 4. Настройка конфигурации
+cp .env.example .env
+nano .env
+# Установите HEADLESS=false для VNC
+
+# 5. Запуск VNC окружения
+./start-vnc.sh
+
+# 6. Запуск панели
+npm start
+```
+
+**Адреса:**
+- Панель: **http://your-server:3000**
+- VNC просмотр: **http://your-server:3000/vnc**
+
 ## 📦 Требования
 
 - **Node.js** 18.0+ 
@@ -49,44 +82,175 @@ npm start
 - **Chrome/Chromium** (устанавливается автоматически с Puppeteer)
 - ~500 MB свободного места
 
+### Для VNC на Linux:
+- **Xvfb** - виртуальный дисплей
+- **x11vnc** - VNC сервер
+- **fluxbox** - оконный менеджер (опционально)
+
+## 🖥️ VNC - Просмотр браузера
+
+Панель имеет **встроенный VNC Viewer**, позволяющий смотреть работу браузера прямо в веб-интерфейсе.
+
+### Настройка на сервере
+
+```bash
+# 1. Установка пакетов
+apt update && apt install -y xvfb x11vnc fluxbox
+
+# 2. Запуск автоматическим скриптом
+./start-vnc.sh
+
+# 3. Или вручную:
+# Запуск виртуального дисплея
+Xvfb :99 -screen 0 1920x1080x24 &
+export DISPLAY=:99
+
+# Запуск оконного менеджера
+fluxbox &
+
+# Запуск VNC сервера
+x11vnc -display :99 -forever -nopw -listen 0.0.0.0 -xkb -rfbport 5900 &
+```
+
+### Настройка в .env
+
+```env
+# Включить окно браузера (обязательно для VNC!)
+HEADLESS=false
+
+# VNC подключение
+VNC_HOST=localhost
+VNC_PORT=5900
+VNC_PASSWORD=
+```
+
+### Просмотр
+
+1. Откройте **http://your-server:3000/vnc**
+2. Нажмите "Подключиться"
+3. Смотрите работу браузера в реальном времени!
+
 ## ⚙️ Конфигурация (.env)
 
 ```env
-# Порт сервера
+# ==========================================
+# Основные настройки
+# ==========================================
 PORT=3000
-
-# Секретный ключ для сессий (ОБЯЗАТЕЛЬНО измените!)
-SESSION_SECRET=ваш-супер-секретный-ключ-32-символа
-
-# Логин/пароль для входа в панель
+SESSION_SECRET=change-me-to-random-32-character-string
 ADMIN_USERNAME=admin
-ADMIN_PASSWORD=ваш_надежный_пароль
+ADMIN_PASSWORD=change_this_password
 
-# Режим браузера (true = без GUI, false = с окном)
-HEADLESS=true
-
-# Задержка между действиями (мс)
+# ==========================================
+# Puppeteer (браузер)
+# ==========================================
+# false = с окном (для VNC), true = без окна
+HEADLESS=false
 SLOW_MO=50
-
-# Задержка между регистрациями (мс)
-REGISTER_DELAY=10000
-
-# Максимум попыток при ошибке
-MAX_RETRIES=3
-
-# Таймаут операций (мс)
 TIMEOUT=60000
 
+# ==========================================
+# Регистрация
+# ==========================================
+REGISTER_DELAY=10000
+MAX_RETRIES=3
+
+# ==========================================
+# VNC
+# ==========================================
+VNC_HOST=localhost
+VNC_PORT=5900
+VNC_PASSWORD=
+
+# ==========================================
+# IMAP - Автоматическое чтение почты
+# ==========================================
+IMAP_HOST=imap.beget.com
+IMAP_PORT=993
+IMAP_TLS=true
+MAIL_PASSWORD=your_email_password
+MAIL_VERIFICATION_ENABLED=false
+MAIL_WAIT_TIMEOUT=120000
+MAIL_CHECK_INTERVAL=5000
+
+# ==========================================
 # Прокси (опционально)
-# PROXY_LIST=http://user:pass@proxy1.com:8080,http://proxy2.com:3128
+# ==========================================
+# PROXY_LIST=http://user:pass@proxy1.com:8080
+
+# ==========================================
+# FlareSolverr - Обход Cloudflare
+# ==========================================
+FLARESOLVERR_ENABLED=false
+FLARESOLVERR_URL=http://localhost:8191/v1
+```
+
+## 📖 Использование
+
+### Режим "Авторизация CLINE"
+
+1. Войдите в панель
+2. Введите Outlook аккаунты в формате `email:password`
+3. Выберите режим **"🔐 Авторизация CLINE"**
+4. Нажмите "Запустить"
+5. Следите за процессом через VNC (/vnc)
+6. Получите токены CLINE и баланс кредитов
+
+**Результат:**
+- Токен CLINE для API
+- Баланс кредитов
+- Тип аккаунта (Personal/Business)
+- Имя пользователя
+
+### Режим "Регистрация Cursor"
+
+1. Введите email аккаунты `email:password`
+2. Выберите **"📝 Регистрация"**
+3. Запустите процесс
+4. Панель автоматически:
+   - Откроет страницу регистрации
+   - Сгенерирует имя/фамилию
+   - Заполнит форму
+   - Пройдёт верификацию (если настроен IMAP)
+
+### Экспорт результатов
+
+- **CSV** - для Excel/Google Sheets
+- **TXT** - простой текстовый формат
+
+## 🛠️ Структура проекта
+
+```
+Cursor_user/
+├── app.js              # Express сервер + роуты
+├── database.js         # SQLite база данных
+├── cursorRegister.js   # Регистрация Cursor (Puppeteer)
+├── clineRegister.js    # Авторизация CLINE через Microsoft
+├── nameGenerator.js    # Генератор имён и паролей
+├── mailReader.js       # IMAP чтение кодов из почты
+├── vncProxy.js         # WebSocket прокси для VNC
+├── start-vnc.sh        # Скрипт запуска VNC
+├── package.json        # Зависимости проекта
+├── .env                # Конфигурация (не в git!)
+├── .env.example        # Пример конфигурации
+├── VNC_SETUP.md        # Подробная инструкция VNC
+├── views/              # EJS шаблоны
+│   ├── login.ejs       # Страница входа
+│   ├── index.ejs       # Главная страница
+│   ├── vnc.ejs         # VNC Viewer
+│   ├── session.ejs     # Детали сессии
+│   └── error.ejs       # Страница ошибок
+└── public/             # Статические файлы
+    ├── css/style.css   # Готические стили
+    └── js/main.js      # Клиентский JavaScript
 ```
 
 ## 🖥️ Хостинг на сервере (VPS/VDS)
 
-### Вариант 1: PM2 (рекомендуется)
+### PM2 + VNC (рекомендуется)
 
 ```bash
-# 1. Установка PM2 глобально
+# 1. Установка PM2
 npm install -g pm2
 
 # 2. Клонирование и настройка
@@ -94,33 +258,49 @@ git clone https://github.com/Sereza111/Cursor_user.git
 cd Cursor_user
 npm install
 
-# 3. Настройка .env
+# 3. Установка VNC пакетов
+apt install -y xvfb x11vnc fluxbox
+
+# 4. Настройка .env
+cp .env.example .env
 nano .env
-# Измените SESSION_SECRET и ADMIN_PASSWORD!
+# Установите HEADLESS=false
 
-# 4. Запуск через PM2
-pm2 start app.js --name cursor-register
+# 5. Создание PM2 ecosystem
+cat > ecosystem.config.js << 'EOF'
+module.exports = {
+  apps: [{
+    name: 'cursor-register',
+    script: 'app.js',
+    env: {
+      NODE_ENV: 'production',
+      DISPLAY: ':99'
+    }
+  }]
+};
+EOF
 
-# 5. Автозапуск при перезагрузке сервера
-pm2 startup
+# 6. Запуск VNC
+./start-vnc.sh
+
+# 7. Запуск через PM2
+pm2 start ecosystem.config.js
 pm2 save
-
-# Полезные команды PM2:
-pm2 logs cursor-register    # Просмотр логов
-pm2 restart cursor-register # Перезапуск
-pm2 stop cursor-register    # Остановка
-pm2 status                  # Статус всех процессов
+pm2 startup
 ```
 
-### Вариант 2: Docker
+### Docker с VNC
 
 ```dockerfile
 # Dockerfile
 FROM node:18-slim
 
-# Установка зависимостей для Puppeteer
+# Установка зависимостей для Puppeteer и VNC
 RUN apt-get update && apt-get install -y \
     chromium \
+    xvfb \
+    x11vnc \
+    fluxbox \
     fonts-liberation \
     libasound2 \
     libatk-bridge2.0-0 \
@@ -150,23 +330,28 @@ COPY . .
 
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV DISPLAY=:99
 
-EXPOSE 3000
+# Скрипт запуска
+COPY docker-entrypoint.sh /
+RUN chmod +x /docker-entrypoint.sh
 
-CMD ["node", "app.js"]
+EXPOSE 3000 5900
+
+ENTRYPOINT ["/docker-entrypoint.sh"]
 ```
 
 ```bash
-# Сборка и запуск Docker
-docker build -t cursor-register .
-docker run -d -p 3000:3000 --name cursor-panel \
-  -e SESSION_SECRET=your-secret-key \
-  -e ADMIN_PASSWORD=your-password \
-  -v $(pwd)/db.sqlite:/app/db.sqlite \
-  cursor-register
+# docker-entrypoint.sh
+#!/bin/bash
+Xvfb :99 -screen 0 1920x1080x24 &
+sleep 1
+fluxbox &
+x11vnc -display :99 -forever -nopw -listen 0.0.0.0 -xkb -rfbport 5900 &
+node app.js
 ```
 
-### Вариант 3: Docker Compose
+### Docker Compose
 
 ```yaml
 # docker-compose.yml
@@ -179,70 +364,28 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
+      - "5900:5900"
     environment:
       - PORT=3000
       - SESSION_SECRET=${SESSION_SECRET}
       - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
-      - HEADLESS=true
+      - HEADLESS=false
+      - VNC_HOST=localhost
+      - VNC_PORT=5900
     volumes:
       - ./db.sqlite:/app/db.sqlite
       - ./exports:/app/exports
 ```
 
-```bash
-# Запуск
-docker-compose up -d
-
-# Просмотр логов
-docker-compose logs -f
-```
-
-### Вариант 4: Systemd Service
-
-```bash
-# /etc/systemd/system/cursor-register.service
-[Unit]
-Description=Cursor Mass Register Panel
-After=network.target
-
-[Service]
-Type=simple
-User=www-data
-WorkingDirectory=/var/www/cursor-register
-ExecStart=/usr/bin/node app.js
-Restart=on-failure
-RestartSec=10
-Environment=NODE_ENV=production
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-# Активация и запуск
-sudo systemctl daemon-reload
-sudo systemctl enable cursor-register
-sudo systemctl start cursor-register
-
-# Статус
-sudo systemctl status cursor-register
-```
-
-### Настройка Nginx (reverse proxy)
-
-```bash
-# Создание файла конфигурации nginx
-sudo nano /etc/nginx/sites-available/cursor-register
-```
-
-Вставьте следующий конфиг:
+### Nginx Reverse Proxy
 
 ```nginx
 server {
     listen 80;
     server_name your-domain.com;
 
+    # Основной сайт
     location / {
         proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
@@ -250,183 +393,89 @@ server {
         proxy_set_header Connection 'upgrade';
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
         proxy_cache_bypass $http_upgrade;
-        proxy_read_timeout 300s;
-        proxy_connect_timeout 75s;
+    }
+
+    # WebSocket для VNC
+    location /vnc-ws {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 86400;
     }
 }
 ```
 
-```bash
-# Активация сайта
-sudo ln -s /etc/nginx/sites-available/cursor-register /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl reload nginx
-
-# SSL сертификат (опционально)
-sudo apt install certbot python3-certbot-nginx
-sudo certbot --nginx -d your-domain.com
-```
-
-## 📖 Использование
-
-1. **Войдите** в панель (admin/admin123 по умолчанию)
-2. **Введите аккаунты** в формате `email:password` (каждый с новой строки)
-3. **Выберите режим**:
-   - 📝 **Регистрация** - создание новых аккаунтов
-   - 🔑 **Вход + Проверка Trial** - проверка существующих аккаунтов
-4. **Нажмите "Запустить"** и следите за прогрессом
-5. **Экспортируйте результаты** в CSV или TXT
-
-## 🛠️ Структура проекта
-
-```
-Cursor_user/
-├── app.js              # Главный сервер Express
-├── database.js         # Модуль SQLite базы данных
-├── cursorRegister.js   # Модуль автоматизации Puppeteer
-├── nameGenerator.js    # Генератор имён и паролей
-├── package.json        # Зависимости проекта
-├── .env                # Конфигурация (не в git!)
-├── views/              # EJS шаблоны
-│   ├── login.ejs       # Страница входа
-│   ├── index.ejs       # Главная страница
-│   ├── session.ejs     # Детали сессии
-│   └── error.ejs       # Страница ошибок
-└── public/             # Статические файлы
-    ├── css/style.css   # Готические стили
-    └── js/main.js      # Клиентский JavaScript
-```
-
-## ⚠️ Важные замечания
-
-1. **Измените пароль!** Не используйте `admin123` в продакшене
-2. **SESSION_SECRET** должен быть уникальным и длинным (32+ символов)
-3. **CAPTCHA** - Cloudflare Turnstile может блокировать автоматизацию
-4. **Прокси** рекомендуются для массовой регистрации
-5. **Rate Limits** - не запускайте слишком много аккаунтов подряд
-
 ## 🔧 Решение проблем
 
-### Puppeteer не запускается
-```bash
-# Ubuntu/Debian - установка зависимостей
-sudo apt-get install -y libgbm-dev libnss3 libatk-bridge2.0-0 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2
+### VNC показывает чёрный экран
 
-# Или использовать system Chrome
-export PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-export PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome
+```bash
+# Проверьте, запущен ли Xvfb
+ps aux | grep Xvfb
+
+# Перезапустите VNC окружение
+pkill Xvfb
+pkill x11vnc
+pkill fluxbox
+./start-vnc.sh
 ```
 
-### Ошибка "Cannot find module"
+### Ошибка "Session closed" в Puppeteer
+
+Убедитесь, что в `.env` установлено `HEADLESS=false` и VNC запущен.
+
+### Браузер не появляется
+
 ```bash
-rm -rf node_modules package-lock.json
-npm install
+# Проверьте переменную DISPLAY
+echo $DISPLAY
+# Должно быть :99
+
+# Установите вручную
+export DISPLAY=:99
+```
+
+### Puppeteer не запускается на Linux
+
+```bash
+# Установка зависимостей
+apt-get install -y libgbm-dev libnss3 libatk-bridge2.0-0 \
+  libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 \
+  libxfixes3 libxrandr2 libgbm1 libasound2
 ```
 
 ### База данных повреждена
+
 ```bash
 rm db.sqlite
 node app.js  # Создаст новую БД
 ```
 
+## ⚠️ Важные замечания
+
+1. **Измените пароль!** Не используйте `admin123` в продакшене
+2. **SESSION_SECRET** должен быть уникальным (32+ символов)
+3. **VNC необходим** для CLINE авторизации (обход диалогов)
+4. **Прокси рекомендуются** для массовых операций
+5. **Outlook аккаунты** должны быть верифицированы
+
 ## 🛡️ FlareSolverr - Обход Cloudflare
 
-Если вы сталкиваетесь с Cloudflare Turnstile CAPTCHA, используйте **FlareSolverr** для обхода защиты.
-
-### Установка FlareSolverr
-
-#### Вариант 1: Docker (рекомендуется)
-
 ```bash
-# Запуск FlareSolverr в Docker
+# Запуск FlareSolverr
 docker run -d \
   --name=flaresolverr \
   -p 8191:8191 \
-  -e LOG_LEVEL=info \
-  --restart unless-stopped \
   ghcr.io/flaresolverr/flaresolverr:latest
 ```
 
-#### Вариант 2: Docker Compose
-
-Добавьте в ваш `docker-compose.yml`:
-
-```yaml
-version: '3.8'
-
-services:
-  cursor-register:
-    build: .
-    container_name: cursor-panel
-    restart: unless-stopped
-    ports:
-      - "3000:3000"
-    environment:
-      - PORT=3000
-      - SESSION_SECRET=${SESSION_SECRET}
-      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
-      - HEADLESS=true
-      - FLARESOLVERR_ENABLED=true
-      - FLARESOLVERR_URL=http://flaresolverr:8191/v1
-    volumes:
-      - ./db.sqlite:/app/db.sqlite
-      - ./exports:/app/exports
-    depends_on:
-      - flaresolverr
-
-  flaresolverr:
-    image: ghcr.io/flaresolverr/flaresolverr:latest
-    container_name: flaresolverr
-    restart: unless-stopped
-    environment:
-      - LOG_LEVEL=info
-      - LOG_HTML=false
-      - CAPTCHA_SOLVER=none
-      - TZ=Europe/Moscow
-    ports:
-      - "8191:8191"
-```
-
-```bash
-# Запуск
-docker-compose up -d
-
-# Проверка статуса FlareSolverr
-curl http://localhost:8191/v1 -X POST \
-  -H "Content-Type: application/json" \
-  -d '{"cmd": "sessions.list"}'
-```
-
-### Настройка в .env
-
+В `.env`:
 ```env
-# Включить FlareSolverr
 FLARESOLVERR_ENABLED=true
-
-# URL сервера FlareSolverr
-# Локально: http://localhost:8191/v1
-# Docker: http://flaresolverr:8191/v1
-# Удалённо: http://YOUR_SERVER_IP:8191/v1
 FLARESOLVERR_URL=http://localhost:8191/v1
 ```
-
-### Как это работает
-
-1. **FlareSolverr** получает запрос на URL страницы регистрации
-2. Использует **undetectable browser** для прохождения Cloudflare
-3. Возвращает **куки сессии** и **User-Agent**
-4. Puppeteer использует эти куки для доступа к странице
-5. Cloudflare видит "легитимную" сессию и пропускает
-
-### Ограничения
-
-- FlareSolverr решает **Cloudflare JS Challenge**, но не **Turnstile виджет** внутри формы
-- Для Turnstile внутри формы нужен платный сервис (2Captcha, CapSolver)
-- Рекомендуется использовать **резидентные прокси** для лучших результатов
 
 ## 📄 Лицензия
 
