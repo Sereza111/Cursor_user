@@ -565,6 +565,115 @@ app.get('/api/sessions', requireAuth, (req, res) => {
     res.json({ sessions });
 });
 
+// ==================== TOKEN ROTATOR API ====================
+
+/**
+ * Получение свежего токена CLINE для локального ротатора
+ * Этот endpoint используется локальным скриптом на ПК пользователя
+ */
+app.get('/api/token/get-fresh', requireAuth, (req, res) => {
+    try {
+        // Получаем неиспользованный токен из БД
+        const account = db.getUnusedClineToken();
+        
+        if (!account) {
+            return res.status(404).json({ 
+                success: false,
+                error: 'Нет доступных токенов. Зарегистрируйте новые аккаунты CLINE.' 
+            });
+        }
+        
+        res.json({
+            success: true,
+            token: account.cline_token,
+            email: account.email,
+            balance: account.cline_balance,
+            accountId: account.id
+        });
+        
+    } catch (error) {
+        console.error('Ошибка получения токена:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * Отметить токен как использованный
+ */
+app.post('/api/token/mark-used', requireAuth, (req, res) => {
+    try {
+        const { accountId } = req.body;
+        
+        if (!accountId) {
+            return res.status(400).json({ success: false, error: 'accountId обязателен' });
+        }
+        
+        db.markClineTokenAsUsed(accountId);
+        
+        res.json({ success: true, message: 'Токен отмечен как использованный' });
+        
+    } catch (error) {
+        console.error('Ошибка отметки токена:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * Получение статистики токенов
+ */
+app.get('/api/token/stats', requireAuth, (req, res) => {
+    try {
+        const stats = db.getClineTokenStats();
+        res.json({ success: true, stats });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * Публичный endpoint для получения токена (с API ключом)
+ * Используется локальным скриптом без авторизации через сессию
+ */
+app.get('/api/token/fetch', (req, res) => {
+    const apiKey = req.headers['x-api-key'] || req.query.apiKey;
+    const expectedKey = process.env.TOKEN_API_KEY;
+    
+    if (!expectedKey) {
+        return res.status(500).json({ 
+            success: false, 
+            error: 'TOKEN_API_KEY не настроен на сервере. Добавьте его в .env' 
+        });
+    }
+    
+    if (apiKey !== expectedKey) {
+        return res.status(401).json({ success: false, error: 'Неверный API ключ' });
+    }
+    
+    try {
+        const account = db.getUnusedClineToken();
+        
+        if (!account) {
+            return res.status(404).json({ 
+                success: false,
+                error: 'Нет доступных токенов' 
+            });
+        }
+        
+        // Автоматически помечаем как использованный
+        db.markClineTokenAsUsed(account.id);
+        
+        res.json({
+            success: true,
+            token: account.cline_token,
+            email: account.email,
+            balance: account.cline_balance
+        });
+        
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 // ==================== MAIL API ====================
 
 /**

@@ -482,6 +482,82 @@ function getDb() {
     return db;
 }
 
+// ==================== ФУНКЦИИ ДЛЯ TOKEN ROTATOR ====================
+
+/**
+ * Получение неиспользованного токена CLINE
+ * @returns {Object|null} - Аккаунт с токеном или null
+ */
+function getUnusedClineToken() {
+    return get(`
+        SELECT id, email, cline_token, cline_balance, created_at
+        FROM accounts 
+        WHERE service_type = 'cline' 
+          AND status = 'success' 
+          AND cline_token IS NOT NULL 
+          AND cline_token != ''
+          AND (used = 0 OR used IS NULL)
+        ORDER BY cline_balance DESC, created_at ASC
+        LIMIT 1
+    `);
+}
+
+/**
+ * Отметить токен как использованный
+ * @param {number} accountId - ID аккаунта
+ */
+function markClineTokenAsUsed(accountId) {
+    run(`
+        UPDATE accounts 
+        SET used = 1, used_at = datetime('now')
+        WHERE id = ?
+    `, [accountId]);
+}
+
+/**
+ * Получение статистики токенов CLINE
+ * @returns {Object} - Статистика
+ */
+function getClineTokenStats() {
+    const result = get(`
+        SELECT 
+            COUNT(*) as total,
+            SUM(CASE WHEN cline_token IS NOT NULL AND cline_token != '' THEN 1 ELSE 0 END) as with_token,
+            SUM(CASE WHEN used = 1 THEN 1 ELSE 0 END) as used,
+            SUM(CASE WHEN (used = 0 OR used IS NULL) AND cline_token IS NOT NULL AND cline_token != '' THEN 1 ELSE 0 END) as available,
+            ROUND(AVG(CASE WHEN cline_balance > 0 THEN cline_balance ELSE NULL END), 2) as avg_balance
+        FROM accounts
+        WHERE service_type = 'cline' AND status = 'success'
+    `);
+    
+    return result || { total: 0, with_token: 0, used: 0, available: 0, avg_balance: 0 };
+}
+
+/**
+ * Сброс статуса использования всех токенов
+ */
+function resetAllTokensUsage() {
+    run(`UPDATE accounts SET used = 0, used_at = NULL WHERE service_type = 'cline'`);
+}
+
+/**
+ * Получение всех доступных токенов CLINE
+ * @param {number} limit - Лимит
+ * @returns {Array} - Список токенов
+ */
+function getAllAvailableClineTokens(limit = 100) {
+    return query(`
+        SELECT id, email, cline_token, cline_balance, created_at, used, used_at
+        FROM accounts 
+        WHERE service_type = 'cline' 
+          AND status = 'success' 
+          AND cline_token IS NOT NULL 
+          AND cline_token != ''
+        ORDER BY used ASC, cline_balance DESC
+        LIMIT ?
+    `, [limit]);
+}
+
 // Экспорт функций
 module.exports = {
     initDatabase,
@@ -505,5 +581,11 @@ module.exports = {
     deleteSessionData,
     query,
     run,
-    get
+    get,
+    // Token Rotator функции
+    getUnusedClineToken,
+    markClineTokenAsUsed,
+    getClineTokenStats,
+    resetAllTokensUsage,
+    getAllAvailableClineTokens
 };
