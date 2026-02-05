@@ -1543,6 +1543,166 @@ class ClineRegister {
                 
                 this.log('info', `🍪 CLINE cookies: ${clineCookies.length} шт.`);
 
+                // ==========================================
+                // ПОЛУЧЕНИЕ ТОКЕНА CLINE API
+                // ==========================================
+                let clineToken = null;
+                let clineBalance = 0;
+                
+                try {
+                    this.log('info', '🔑 Получаем токен CLINE API...');
+                    
+                    // Ждём пока страница полностью загрузится
+                    await this.humanDelay(3000, 5000);
+                    
+                    // Метод 1: Ищем токен в localStorage
+                    const storageToken = await this.page.evaluate(() => {
+                        // Проверяем различные ключи localStorage
+                        const possibleKeys = [
+                            'cline_token', 'clineToken', 'token', 'apiKey', 'api_key',
+                            'auth_token', 'authToken', 'access_token', 'accessToken',
+                            'cline_api_key', 'clineApiKey', 'session_token'
+                        ];
+                        
+                        for (const key of possibleKeys) {
+                            const value = localStorage.getItem(key);
+                            if (value && value.length > 20) {
+                                console.log('Найден токен в localStorage:', key);
+                                return { key, value };
+                            }
+                        }
+                        
+                        // Проверяем все ключи localStorage на предмет токена
+                        for (let i = 0; i < localStorage.length; i++) {
+                            const key = localStorage.key(i);
+                            const value = localStorage.getItem(key);
+                            // Токен обычно длинная строка
+                            if (value && value.length > 50 && value.length < 500 && 
+                                !value.includes('{') && !value.includes('<')) {
+                                console.log('Потенциальный токен:', key, value.substring(0, 30));
+                                return { key, value };
+                            }
+                        }
+                        
+                        return null;
+                    });
+                    
+                    if (storageToken) {
+                        this.log('info', `🔑 Найден токен в localStorage: ${storageToken.key}`);
+                        clineToken = storageToken.value;
+                    }
+                    
+                    // Метод 2: Если не нашли - переходим на страницу настроек/API
+                    if (!clineToken) {
+                        this.log('info', '🔍 Переходим на страницу API ключа...');
+                        
+                        // Пробуем перейти на страницу с API ключом
+                        const apiPages = [
+                            'https://app.cline.bot/settings/api',
+                            'https://app.cline.bot/api',
+                            'https://app.cline.bot/settings',
+                            'https://app.cline.bot/dashboard/api'
+                        ];
+                        
+                        for (const apiPage of apiPages) {
+                            try {
+                                await this.page.goto(apiPage, { 
+                                    waitUntil: 'networkidle2', 
+                                    timeout: 10000 
+                                });
+                                
+                                await this.humanDelay(2000, 3000);
+                                
+                                // Ищем токен на странице
+                                const pageToken = await this.page.evaluate(() => {
+                                    // Ищем элемент с токеном (обычно input readonly или code блок)
+                                    const inputs = document.querySelectorAll('input[readonly], input[type="text"], code, pre');
+                                    for (const el of inputs) {
+                                        const value = el.value || el.textContent || '';
+                                        // API ключ обычно выглядит как cline_xxxxx или sk-xxxxx
+                                        if ((value.startsWith('cline_') || value.startsWith('sk-') || 
+                                             value.length > 30) && !value.includes(' ')) {
+                                            return value.trim();
+                                        }
+                                    }
+                                    
+                                    // Ищем в тексте страницы
+                                    const text = document.body.innerText;
+                                    const tokenMatch = text.match(/cline_[a-zA-Z0-9]{20,}/);
+                                    if (tokenMatch) return tokenMatch[0];
+                                    
+                                    const skMatch = text.match(/sk-[a-zA-Z0-9]{20,}/);
+                                    if (skMatch) return skMatch[0];
+                                    
+                                    return null;
+                                });
+                                
+                                if (pageToken) {
+                                    this.log('info', `🔑 Токен найден на странице ${apiPage}`);
+                                    clineToken = pageToken;
+                                    break;
+                                }
+                            } catch (e) {
+                                this.log('info', `⚠️ Страница ${apiPage} недоступна`);
+                            }
+                        }
+                    }
+                    
+                    // Метод 3: Перехватываем токен из network запросов
+                    if (!clineToken) {
+                        this.log('info', '🔍 Ищем токен в cookies...');
+                        
+                        // Проверяем cookies снова
+                        const allCookies = await this.page.cookies();
+                        for (const cookie of allCookies) {
+                            if (cookie.name.includes('token') || cookie.name.includes('api') ||
+                                cookie.name.includes('key') || cookie.name.includes('session')) {
+                                // Фильтруем слишком короткие или длинные
+                                if (cookie.value.length > 30 && cookie.value.length < 500) {
+                                    this.log('info', `🔑 Потенциальный токен в cookie: ${cookie.name}`);
+                                    clineToken = cookie.value;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Если нашли токен - проверяем его через API
+                    if (clineToken) {
+                        this.log('info', `✅ Токен CLINE: ${clineToken.substring(0, 20)}...`);
+                        
+                        // Проверяем баланс через API
+                        try {
+                            const balanceResponse = await this.page.evaluate(async (token) => {
+                                const response = await fetch('https://api.cline.bot/api/user', {
+                                    method: 'GET',
+                                    headers: {
+                                        'Authorization': `Bearer ${token}`,
+                                        'Content-Type': 'application/json'
+                                    }
+                                });
+                                
+                                if (response.ok) {
+                                    return await response.json();
+                                }
+                                return null;
+                            }, clineToken);
+                            
+                            if (balanceResponse) {
+                                clineBalance = balanceResponse.credits || balanceResponse.balance || 0;
+                                this.log('info', `💰 Баланс CLINE: ${clineBalance} кредитов`);
+                            }
+                        } catch (e) {
+                            this.log('warning', `⚠️ Не удалось проверить баланс: ${e.message}`);
+                        }
+                    } else {
+                        this.log('warning', '⚠️ Токен CLINE API не найден');
+                    }
+                    
+                } catch (tokenError) {
+                    this.log('warning', `⚠️ Ошибка получения токена: ${tokenError.message}`);
+                }
+
                 const processingTime = Date.now() - startTime;
                 
                 db.updateAccount(accountId, {
@@ -1550,6 +1710,8 @@ class ClineRegister {
                     trial_status: 'active',
                     session_token: sessionToken || JSON.stringify(clineCookies),
                     access_token: accessToken,
+                    cline_token: clineToken,
+                    cline_balance: clineBalance,
                     processing_time: processingTime
                 });
 
@@ -1560,6 +1722,8 @@ class ClineRegister {
                     email: email,
                     sessionToken: sessionToken,
                     accessToken: accessToken,
+                    clineToken: clineToken,
+                    clineBalance: clineBalance,
                     cookies: clineCookies,
                     finalUrl: finalUrl
                 };

@@ -1,0 +1,17 @@
+{
+  "name": "cline-token-rotator",
+  "version": "1.0.0",
+  "description": "Автоматическая ротация токенов CLINE при низком балансе",
+  "main": "rotator.js",
+  "scripts": {
+    "start": "node rotator.js",
+    "check": "node rotator.js --check-only",
+    "daemon": "node daemon.js"
+  },
+  "dependencies": {
+    "keytar": "^7.9.0",
+    "node-fetch": "^2.7.0",
+    "dotenv": "^16.3.1",
+    "sql.js": "^1.8.0"
+  }
+}

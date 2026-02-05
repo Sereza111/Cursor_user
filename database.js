@@ -169,6 +169,50 @@ async function runMigrations() {
         }
     }
     
+    // Миграция: добавление cline_token (токен CLINE API)
+    if (!columns.includes('cline_token')) {
+        console.log('📦 Миграция: добавление колонки cline_token');
+        try {
+            db.run("ALTER TABLE accounts ADD COLUMN cline_token TEXT");
+            console.log('✅ Колонка cline_token добавлена');
+        } catch (err) {
+            console.log('⚠️ cline_token: ' + err.message);
+        }
+    }
+    
+    // Миграция: добавление cline_balance (баланс CLINE)
+    if (!columns.includes('cline_balance')) {
+        console.log('📦 Миграция: добавление колонки cline_balance');
+        try {
+            db.run("ALTER TABLE accounts ADD COLUMN cline_balance REAL DEFAULT 0");
+            console.log('✅ Колонка cline_balance добавлена');
+        } catch (err) {
+            console.log('⚠️ cline_balance: ' + err.message);
+        }
+    }
+    
+    // Миграция: добавление used (флаг использования токена)
+    if (!columns.includes('used')) {
+        console.log('📦 Миграция: добавление колонки used');
+        try {
+            db.run("ALTER TABLE accounts ADD COLUMN used INTEGER DEFAULT 0");
+            console.log('✅ Колонка used добавлена');
+        } catch (err) {
+            console.log('⚠️ used: ' + err.message);
+        }
+    }
+    
+    // Миграция: добавление used_at (дата использования)
+    if (!columns.includes('used_at')) {
+        console.log('📦 Миграция: добавление колонки used_at');
+        try {
+            db.run("ALTER TABLE accounts ADD COLUMN used_at TEXT");
+            console.log('✅ Колонка used_at добавлена');
+        } catch (err) {
+            console.log('⚠️ used_at: ' + err.message);
+        }
+    }
+    
     console.log('✅ Миграции выполнены');
 }
 
