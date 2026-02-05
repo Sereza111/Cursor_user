@@ -647,12 +647,13 @@ class ClineRegister {
 
     /**
      * Обработка диалогов на authkit.cline.bot (Accept, Continue, Allow и т.д.)
+     * Включает: Terms of Service, Personal/Organization выбор, и финальную регистрацию
      */
     async handleClineAuthDialogs() {
         this.log('info', '🔄 Проверяем наличие диалогов CLINE Auth...');
         
         let dialogsHandled = 0;
-        const maxDialogs = 5;
+        const maxDialogs = 10; // Увеличили для обработки всех шагов
         
         for (let i = 0; i < maxDialogs; i++) {
             try {
@@ -661,17 +662,13 @@ class ClineRegister {
                 const currentUrl = this.page.url();
                 this.log('info', `📍 CLINE URL: ${currentUrl}`);
                 
-                // Если уже на dashboard или app - выходим
-                if (currentUrl.includes('app.cline.bot') || 
-                    currentUrl.includes('dashboard') ||
-                    currentUrl.includes('api.cline.bot/api/v1/auth/callback')) {
-                    this.log('info', '✅ Авторизация CLINE завершена');
-                    break;
-                }
+                // Скриншот текущего состояния
+                await this.page.screenshot({ path: `cline_dialog_step_${i}.png` });
                 
-                // Проверяем что мы на authkit.cline.bot
-                if (!currentUrl.includes('authkit.cline.bot') && !currentUrl.includes('cline.bot')) {
-                    this.log('info', '📍 Не на CLINE, пропускаем...');
+                // Если уже на dashboard или app - выходим
+                if (currentUrl.includes('app.cline.bot/dashboard') || 
+                    currentUrl.includes('cline.bot/dashboard')) {
+                    this.log('info', '✅ Авторизация CLINE завершена - на dashboard!');
                     break;
                 }
                 
@@ -680,130 +677,345 @@ class ClineRegister {
                     return await this.page.evaluate(() => ({
                         text: document.body.innerText.toLowerCase(),
                         title: document.title.toLowerCase(),
-                        html: document.body.innerHTML.substring(0, 2000)
+                        html: document.body.innerHTML.substring(0, 5000)
                     }));
                 }, 'получение контента CLINE');
                 
                 if (!pageContent) continue;
                 
                 const { text, title, html } = pageContent;
-                this.log('info', `📄 Текст страницы: ${text.substring(0, 200)}...`);
+                this.log('info', `📄 Текст страницы: ${text.substring(0, 300)}...`);
                 
                 // ==========================================
-                // Диалог: Consent / Accept / Allow access
+                // Диалог 1: "Let's get started" - Terms of Service + Register
+                // Страница с чекбоксом "I agree to Cline's Terms of Service"
                 // ==========================================
-                if (text.includes('accept') || text.includes('allow') || 
-                    text.includes('consent') || text.includes('authorize') ||
-                    text.includes('continue') || text.includes('grant') ||
-                    text.includes('permission') || text.includes('access')) {
+                if (text.includes("let's get started") || text.includes('create an account') ||
+                    text.includes('terms of service') || text.includes('privacy policy')) {
                     
-                    this.log('info', '📋 Найден диалог согласия CLINE');
+                    this.log('info', '📋 Найден диалог "Let\'s get started" - Terms of Service');
                     
-                    // Скриншот для отладки
-                    await this.page.screenshot({ path: `cline_consent_dialog.png` });
-                    
-                    // Пробуем нажать Accept/Allow/Continue
-                    const acceptClicked = await this.safeAction(async () => {
+                    // 1. Ставим галочку Terms of Service
+                    const checkboxClicked = await this.safeAction(async () => {
                         return await this.page.evaluate(() => {
-                            // Сначала ищем по распространённым селекторам
-                            const acceptSelectors = [
-                                // Кнопки по ID
-                                '#accept-button',
-                                '#accept',
-                                '#allow-button',
-                                '#allow',
-                                '#continue-button',
-                                '#continue',
-                                '#authorize-button',
-                                '#authorize',
-                                '#consent-button',
-                                '#consent',
-                                '#submit',
-                                '#confirm',
-                                // data атрибуты
-                                '[data-testid="accept-button"]',
-                                '[data-testid="allow-button"]',
-                                '[data-testid="continue-button"]',
-                                '[data-action="accept"]',
-                                '[data-action="allow"]',
-                                // Классы
-                                '.accept-button',
-                                '.allow-button',
-                                '.continue-button',
-                                '.consent-button',
-                                '.authorize-button',
-                                // Типы
-                                'button[type="submit"]',
-                                'input[type="submit"]'
+                            // Ищем чекбокс Terms of Service
+                            const checkboxSelectors = [
+                                'input[type="checkbox"]',
+                                '[role="checkbox"]',
+                                'input[name*="terms"]',
+                                'input[name*="agree"]',
+                                'input[id*="terms"]',
+                                'input[id*="agree"]',
+                                '.checkbox input',
+                                'label input[type="checkbox"]'
                             ];
                             
-                            for (const selector of acceptSelectors) {
-                                try {
-                                    const btn = document.querySelector(selector);
-                                    if (btn && btn.offsetParent !== null) {
-                                        console.log('Найдена кнопка по селектору:', selector);
-                                        btn.click();
-                                        return selector;
+                            for (const selector of checkboxSelectors) {
+                                const checkbox = document.querySelector(selector);
+                                if (checkbox) {
+                                    // Проверяем, не отмечен ли уже
+                                    const isChecked = checkbox.checked || 
+                                                     checkbox.getAttribute('aria-checked') === 'true' ||
+                                                     checkbox.classList.contains('checked');
+                                    
+                                    if (!isChecked) {
+                                        console.log('Нашли чекбокс, кликаем:', selector);
+                                        checkbox.click();
+                                        return `checkbox:${selector}`;
+                                    } else {
+                                        console.log('Чекбокс уже отмечен');
+                                        return 'already-checked';
                                     }
-                                } catch (e) {}
+                                }
                             }
                             
-                            // Ищем по тексту кнопки
-                            const buttons = document.querySelectorAll('button, a[role="button"], div[role="button"], input[type="submit"], input[type="button"]');
-                            const acceptTexts = ['accept', 'allow', 'continue', 'authorize', 'grant', 'yes', 'confirm', 'ok', 'принять', 'разрешить', 'продолжить'];
+                            // Пробуем кликнуть на label с текстом terms
+                            const labels = document.querySelectorAll('label, span, div');
+                            for (const label of labels) {
+                                const labelText = label.textContent?.toLowerCase() || '';
+                                if (labelText.includes('agree') || labelText.includes('terms')) {
+                                    const checkbox = label.querySelector('input[type="checkbox"]') ||
+                                                    label.previousElementSibling ||
+                                                    label.nextElementSibling;
+                                    if (checkbox && checkbox.type === 'checkbox') {
+                                        checkbox.click();
+                                        return 'label-checkbox';
+                                    }
+                                    // Кликаем на сам label
+                                    label.click();
+                                    return 'label-click';
+                                }
+                            }
+                            
+                            return false;
+                        });
+                    }, 'установка галочки Terms of Service');
+                    
+                    if (checkboxClicked) {
+                        this.log('info', `✅ Галочка Terms of Service: ${checkboxClicked}`);
+                        await this.humanDelay(500, 1000);
+                    } else {
+                        this.log('warning', '⚠️ Чекбокс не найден, пробуем через Puppeteer...');
+                        
+                        // Пробуем через Puppeteer
+                        const checkboxes = await this.page.$$('input[type="checkbox"], [role="checkbox"]');
+                        for (const cb of checkboxes) {
+                            const isChecked = await cb.evaluate(el => el.checked || el.getAttribute('aria-checked') === 'true');
+                            if (!isChecked) {
+                                await cb.click();
+                                this.log('info', '✅ Кликнули чекбокс через Puppeteer');
+                                await this.humanDelay(500, 1000);
+                                break;
+                            }
+                        }
+                    }
+                    
+                    // 2. Нажимаем кнопку Register
+                    await this.humanDelay(1000, 1500);
+                    
+                    const registerClicked = await this.safeAction(async () => {
+                        return await this.page.evaluate(() => {
+                            const buttons = document.querySelectorAll('button, input[type="submit"], a[role="button"]');
                             
                             for (const btn of buttons) {
                                 const btnText = (btn.textContent || btn.value || '').toLowerCase().trim();
-                                const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
+                                
+                                if (btnText === 'register' || btnText.includes('register') ||
+                                    btnText === 'sign up' || btnText.includes('sign up') ||
+                                    btnText === 'create account' || btnText.includes('create')) {
+                                    console.log('Нашли кнопку Register:', btnText);
+                                    btn.click();
+                                    return `register:${btnText}`;
+                                }
+                            }
+                            
+                            // Ищем submit кнопку
+                            const submitBtn = document.querySelector('button[type="submit"], input[type="submit"]');
+                            if (submitBtn) {
+                                submitBtn.click();
+                                return 'submit-button';
+                            }
+                            
+                            return false;
+                        });
+                    }, 'нажатие Register');
+                    
+                    if (registerClicked) {
+                        this.log('info', `✅ Нажали Register: ${registerClicked}`);
+                        dialogsHandled++;
+                        await this.humanDelay(3000, 5000);
+                        continue;
+                    } else {
+                        // Пробуем через Puppeteer
+                        const buttons = await this.page.$$('button, input[type="submit"]');
+                        for (const btn of buttons) {
+                            const text = await btn.evaluate(el => (el.textContent || el.value || '').toLowerCase().trim());
+                            if (text.includes('register') || text.includes('sign up') || text.includes('create')) {
+                                await btn.click();
+                                this.log('info', `✅ Кликнули Register через Puppeteer: "${text}"`);
+                                dialogsHandled++;
+                                await this.humanDelay(3000, 5000);
+                                break;
+                            }
+                        }
+                    }
+                    continue;
+                }
+                
+                // ==========================================
+                // Диалог 2: "Choose your account type" - Personal/Organization
+                // ==========================================
+                if (text.includes('choose your account type') || text.includes('account type') ||
+                    (text.includes('personal') && text.includes('organization'))) {
+                    
+                    this.log('info', '📋 Найден диалог "Choose your account type"');
+                    
+                    // 1. Выбираем Personal
+                    const personalClicked = await this.safeAction(async () => {
+                        return await this.page.evaluate(() => {
+                            // Ищем опцию Personal
+                            const personalSelectors = [
+                                '[data-value="personal"]',
+                                '[data-type="personal"]',
+                                'input[value="personal"]',
+                                'button[data-testid="personal"]',
+                                '.personal-option',
+                                '#personal'
+                            ];
+                            
+                            for (const selector of personalSelectors) {
+                                const el = document.querySelector(selector);
+                                if (el) {
+                                    el.click();
+                                    return selector;
+                                }
+                            }
+                            
+                            // Ищем по тексту
+                            const elements = document.querySelectorAll('button, div[role="button"], label, div, span');
+                            for (const el of elements) {
+                                const text = el.textContent?.toLowerCase().trim() || '';
+                                // Точное совпадение "personal" или содержит только personal
+                                if (text === 'personal' || (text.includes('personal') && !text.includes('organization'))) {
+                                    console.log('Нашли Personal:', text);
+                                    el.click();
+                                    return `text:personal`;
+                                }
+                            }
+                            
+                            // Ищем карточку/блок с иконкой дома (Personal обычно с домиком)
+                            const cards = document.querySelectorAll('[class*="card"], [class*="option"], [class*="choice"]');
+                            for (const card of cards) {
+                                const cardText = card.textContent?.toLowerCase() || '';
+                                if (cardText.includes('personal') && !cardText.includes('organization')) {
+                                    card.click();
+                                    return 'card:personal';
+                                }
+                            }
+                            
+                            return false;
+                        });
+                    }, 'выбор Personal');
+                    
+                    if (personalClicked) {
+                        this.log('info', `✅ Выбрали Personal: ${personalClicked}`);
+                        await this.humanDelay(1000, 1500);
+                    } else {
+                        this.log('warning', '⚠️ Personal не найден, пробуем кликнуть на первую опцию...');
+                        
+                        // Пробуем через координаты или первый элемент
+                        const options = await this.page.$$('[class*="option"], [class*="card"], [class*="choice"], button');
+                        for (const opt of options) {
+                            const text = await opt.evaluate(el => el.textContent?.toLowerCase() || '');
+                            if (text.includes('personal')) {
+                                await opt.click();
+                                this.log('info', '✅ Кликнули Personal через Puppeteer');
+                                await this.humanDelay(1000, 1500);
+                                break;
+                            }
+                        }
+                    }
+                    
+                    // 2. Нажимаем Continue
+                    await this.humanDelay(1000, 1500);
+                    
+                    const continueClicked = await this.safeAction(async () => {
+                        return await this.page.evaluate(() => {
+                            const buttons = document.querySelectorAll('button, input[type="submit"], a[role="button"]');
+                            
+                            for (const btn of buttons) {
+                                const btnText = (btn.textContent || btn.value || '').toLowerCase().trim();
+                                
+                                if (btnText === 'continue' || btnText.includes('continue') ||
+                                    btnText === 'next' || btnText.includes('next') ||
+                                    btnText === 'proceed') {
+                                    console.log('Нашли кнопку Continue:', btnText);
+                                    btn.click();
+                                    return `continue:${btnText}`;
+                                }
+                            }
+                            
+                            return false;
+                        });
+                    }, 'нажатие Continue');
+                    
+                    if (continueClicked) {
+                        this.log('info', `✅ Нажали Continue: ${continueClicked}`);
+                        dialogsHandled++;
+                        await this.humanDelay(3000, 5000);
+                        continue;
+                    } else {
+                        // Через Puppeteer
+                        const buttons = await this.page.$$('button, input[type="submit"]');
+                        for (const btn of buttons) {
+                            const text = await btn.evaluate(el => (el.textContent || el.value || '').toLowerCase().trim());
+                            if (text.includes('continue') || text.includes('next')) {
+                                await btn.click();
+                                this.log('info', `✅ Кликнули Continue через Puppeteer: "${text}"`);
+                                dialogsHandled++;
+                                await this.humanDelay(3000, 5000);
+                                break;
+                            }
+                        }
+                    }
+                    continue;
+                }
+                
+                // ==========================================
+                // Диалог 3: Microsoft Consent (Accept permissions)
+                // ==========================================
+                if (text.includes('let this app access') || text.includes('cline bot inc') ||
+                    text.includes('permission') || text.includes('needs your permission')) {
+                    
+                    this.log('info', '📋 Найден диалог Microsoft Consent (разрешения)');
+                    
+                    const acceptClicked = await this.safeAction(async () => {
+                        return await this.page.evaluate(() => {
+                            const buttons = document.querySelectorAll('button, input[type="submit"], input[type="button"]');
+                            
+                            for (const btn of buttons) {
+                                const btnText = (btn.textContent || btn.value || '').toLowerCase().trim();
+                                
+                                if (btnText === 'accept' || btnText.includes('accept') ||
+                                    btnText === 'allow' || btnText === 'yes') {
+                                    btn.click();
+                                    return `accept:${btnText}`;
+                                }
+                            }
+                            
+                            // По ID
+                            const acceptBtn = document.querySelector('#idBtn_Accept, #accept, [data-testid="accept"]');
+                            if (acceptBtn) {
+                                acceptBtn.click();
+                                return 'id:accept';
+                            }
+                            
+                            return false;
+                        });
+                    }, 'нажатие Accept на Microsoft Consent');
+                    
+                    if (acceptClicked) {
+                        this.log('info', `✅ Нажали Accept: ${acceptClicked}`);
+                        dialogsHandled++;
+                        await this.humanDelay(3000, 5000);
+                        continue;
+                    }
+                }
+                
+                // ==========================================
+                // Диалог: Общий Accept / Continue / Allow
+                // ==========================================
+                if (text.includes('accept') || text.includes('allow') || 
+                    text.includes('consent') || text.includes('authorize') ||
+                    text.includes('continue') || text.includes('grant')) {
+                    
+                    this.log('info', '📋 Найден общий диалог согласия');
+                    
+                    const acceptClicked = await this.safeAction(async () => {
+                        return await this.page.evaluate(() => {
+                            const buttons = document.querySelectorAll('button, input[type="submit"], a[role="button"]');
+                            const acceptTexts = ['accept', 'allow', 'continue', 'authorize', 'grant', 'yes', 'confirm', 'ok'];
+                            
+                            for (const btn of buttons) {
+                                const btnText = (btn.textContent || btn.value || '').toLowerCase().trim();
                                 
                                 for (const acceptText of acceptTexts) {
-                                    if (btnText.includes(acceptText) || ariaLabel.includes(acceptText)) {
-                                        console.log('Найдена кнопка по тексту:', btnText);
+                                    if (btnText === acceptText || btnText.includes(acceptText)) {
                                         btn.click();
                                         return `text:${btnText}`;
                                     }
                                 }
                             }
                             
-                            // Логируем все кнопки для отладки
-                            const allBtns = document.querySelectorAll('button, a[role="button"], div[role="button"], input[type="submit"], input[type="button"]');
-                            console.log('Все кнопки на CLINE:', Array.from(allBtns).map(b => ({
-                                tag: b.tagName,
-                                id: b.id,
-                                text: b.textContent?.trim().substring(0, 50),
-                                value: b.value,
-                                className: b.className?.substring(0, 50),
-                                visible: b.offsetParent !== null
-                            })));
-                            
                             return false;
                         });
-                    }, 'нажатие Accept на CLINE');
+                    }, 'нажатие Accept');
                     
                     if (acceptClicked) {
-                        this.log('info', `✅ Нажали Accept на CLINE (способ: ${acceptClicked})`);
+                        this.log('info', `✅ Нажали: ${acceptClicked}`);
                         dialogsHandled++;
                         await this.humanDelay(3000, 5000);
                         continue;
-                    } else {
-                        this.log('warning', '⚠️ Не удалось найти кнопку Accept, пробуем через Puppeteer...');
-                        
-                        // Пробуем через Puppeteer найти и кликнуть
-                        const buttons = await this.page.$$('button, a[role="button"], input[type="submit"]');
-                        
-                        for (const btn of buttons) {
-                            const text = await btn.evaluate(el => (el.textContent || el.value || '').toLowerCase().trim());
-                            
-                            if (text.includes('accept') || text.includes('allow') || 
-                                text.includes('continue') || text.includes('authorize') ||
-                                text.includes('yes') || text.includes('confirm')) {
-                                this.log('info', `✅ Нашли кнопку через Puppeteer: "${text}"`);
-                                await btn.click();
-                                dialogsHandled++;
-                                await this.humanDelay(3000, 5000);
-                                break;
-                            }
-                        }
                     }
                 }
                 
@@ -814,7 +1026,6 @@ class ClineRegister {
                     text.includes('problem') || text.includes('try again')) {
                     this.log('warning', '⚠️ Обнаружена ошибка на странице CLINE');
                     
-                    // Ищем кнопку "Try again" или "Retry"
                     const retryClicked = await this.safeAction(async () => {
                         return await this.page.evaluate(() => {
                             const buttons = document.querySelectorAll('button, a');
@@ -838,7 +1049,7 @@ class ClineRegister {
                     }
                 }
                 
-                // Если на странице нет явных диалогов - выходим
+                // Если диалогов больше нет - выходим
                 this.log('info', '📋 Диалогов CLINE больше не найдено');
                 break;
                 
