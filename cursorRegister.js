@@ -10,27 +10,44 @@ const { generateFullName, generateUserAgent, generateViewport } = require('./nam
 const db = require('./database');
 const mailReader = require('./mailReader');
 
-// Подключаем stealth плагин с максимальными настройками
+// Подключаем stealth плагин с оптимизированными настройками
 const stealthPlugin = StealthPlugin();
-// Включаем все evasions
+
+// Включаем безопасные evasions
 stealthPlugin.enabledEvasions.add('chrome.app');
 stealthPlugin.enabledEvasions.add('chrome.csi');
 stealthPlugin.enabledEvasions.add('chrome.loadTimes');
 stealthPlugin.enabledEvasions.add('chrome.runtime');
 stealthPlugin.enabledEvasions.add('defaultArgs');
-stealthPlugin.enabledEvasions.add('iframe.contentWindow');
 stealthPlugin.enabledEvasions.add('media.codecs');
 stealthPlugin.enabledEvasions.add('navigator.hardwareConcurrency');
 stealthPlugin.enabledEvasions.add('navigator.languages');
 stealthPlugin.enabledEvasions.add('navigator.permissions');
 stealthPlugin.enabledEvasions.add('navigator.plugins');
 stealthPlugin.enabledEvasions.add('navigator.webdriver');
-stealthPlugin.enabledEvasions.add('sourceurl');
 stealthPlugin.enabledEvasions.add('user-agent-override');
 stealthPlugin.enabledEvasions.add('webgl.vendor');
 stealthPlugin.enabledEvasions.add('window.outerdimensions');
 
+// ВАЖНО: Отключаем проблемные evasions которые вызывают "Session closed" ошибки
+stealthPlugin.enabledEvasions.delete('iframe.contentWindow');
+stealthPlugin.enabledEvasions.delete('sourceurl');
+
 puppeteer.use(stealthPlugin);
+
+// Глобальный обработчик для игнорирования ошибок закрытых сессий
+process.on('unhandledRejection', (reason, promise) => {
+    if (reason && reason.message && (
+        reason.message.includes('Session closed') ||
+        reason.message.includes('Target closed') ||
+        reason.message.includes('Protocol error') ||
+        reason.message.includes('page has been closed')
+    )) {
+        // Игнорируем эти ошибки - они возникают при быстром закрытии страниц
+        console.log('[CURSOR] ⚠️ Игнорируем ошибку закрытой сессии');
+        return;
+    }
+});
 
 // Настройки проверки почты
 const getMailConfig = () => ({

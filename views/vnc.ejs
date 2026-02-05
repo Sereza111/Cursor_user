@@ -179,6 +179,15 @@
         </div>
     </nav>
     
+    <!-- Алерт о статусе VNC -->
+    <div class="container-fluid px-3 pt-2">
+        <div id="vncAlert" class="alert alert-warning alert-dismissible fade show d-none" role="alert">
+            <i class="bi bi-exclamation-triangle"></i>
+            <span id="vncAlertText">Проверка статуса VNC...</span>
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+    </div>
+    
     <div class="vnc-container">
         <!-- Панель инструментов -->
         <div class="vnc-toolbar">
@@ -789,6 +798,60 @@
                 if (e.key === 'Enter') connect();
             });
         });
+        
+        // Проверка статуса VNC при загрузке
+        async function checkVNCStatus() {
+            const alertDiv = document.getElementById('vncAlert');
+            const alertText = document.getElementById('vncAlertText');
+            
+            try {
+                const response = await fetch('/api/vnc/status');
+                const data = await response.json();
+                
+                if (data.running) {
+                    // VNC сервер работает - скрываем алерт
+                    alertDiv.classList.add('d-none');
+                    
+                    // Показываем статус в vncStatus
+                    document.getElementById('vncStatus').innerHTML = `
+                        <i class="bi bi-display text-success" style="font-size: 4rem;"></i>
+                        <p class="mt-3 text-success">✅ VNC сервер доступен</p>
+                        <p class="text-muted">${data.host}:${data.port}</p>
+                        <p class="text-muted">Нажмите "Подключиться" для просмотра</p>
+                    `;
+                } else {
+                    // VNC сервер не работает - показываем алерт
+                    alertDiv.classList.remove('d-none');
+                    alertDiv.classList.remove('alert-warning');
+                    alertDiv.classList.add('alert-danger');
+                    alertText.innerHTML = `
+                        <strong>VNC сервер не запущен!</strong> 
+                        Запустите его командой: <code>./start-vnc.sh</code> на сервере.
+                        <br><small class="text-muted">${data.message}</small>
+                    `;
+                    
+                    // Обновляем статус на экране
+                    document.getElementById('vncStatus').innerHTML = `
+                        <i class="bi bi-display text-danger" style="font-size: 4rem;"></i>
+                        <p class="mt-3 text-danger">❌ VNC сервер не запущен</p>
+                        <p class="text-muted">Подключение невозможно</p>
+                        <div class="mt-3">
+                            <code class="bg-dark text-light p-2 rounded">./start-vnc.sh</code>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                alertDiv.classList.remove('d-none');
+                alertDiv.classList.add('alert-warning');
+                alertText.textContent = 'Не удалось проверить статус VNC сервера';
+            }
+        }
+        
+        // Проверяем статус при загрузке
+        document.addEventListener('DOMContentLoaded', checkVNCStatus);
+        
+        // Периодическая проверка статуса каждые 30 секунд
+        setInterval(checkVNCStatus, 30000);
     </script>
 </body>
 </html>

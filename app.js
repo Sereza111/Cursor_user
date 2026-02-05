@@ -627,6 +627,51 @@ app.post('/api/mail/fetch', requireAuth, async (req, res) => {
 });
 
 /**
+ * Проверка статуса VNC сервера
+ */
+app.get('/api/vnc/status', requireAuth, async (req, res) => {
+    const net = require('net');
+    const vncHost = process.env.VNC_HOST || 'localhost';
+    const vncPort = parseInt(process.env.VNC_PORT) || 5900;
+    
+    // Пробуем подключиться к VNC серверу
+    const checkVNC = () => {
+        return new Promise((resolve) => {
+            const socket = new net.Socket();
+            socket.setTimeout(3000);
+            
+            socket.on('connect', () => {
+                socket.destroy();
+                resolve(true);
+            });
+            
+            socket.on('error', () => {
+                socket.destroy();
+                resolve(false);
+            });
+            
+            socket.on('timeout', () => {
+                socket.destroy();
+                resolve(false);
+            });
+            
+            socket.connect(vncPort, vncHost);
+        });
+    };
+    
+    const isRunning = await checkVNC();
+    
+    res.json({
+        running: isRunning,
+        host: vncHost,
+        port: vncPort,
+        message: isRunning 
+            ? `VNC сервер доступен на ${vncHost}:${vncPort}` 
+            : `VNC сервер не отвечает на ${vncHost}:${vncPort}. Запустите: ./start-vnc.sh`
+    });
+});
+
+/**
  * Получение статуса IMAP конфигурации
  */
 app.get('/api/mail/config', requireAuth, (req, res) => {

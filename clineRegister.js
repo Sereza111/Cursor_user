@@ -7,9 +7,28 @@ const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const db = require('./database');
 
-// Подключаем stealth плагин
+// Подключаем stealth плагин с отключением проблемных evasions
 const stealthPlugin = StealthPlugin();
+
+// Отключаем evasions которые вызывают "Session closed" ошибки
+stealthPlugin.enabledEvasions.delete('iframe.contentWindow');
+stealthPlugin.enabledEvasions.delete('sourceurl');
+
 puppeteer.use(stealthPlugin);
+
+// Глобальный обработчик для игнорирования ошибок закрытых сессий
+process.on('unhandledRejection', (reason, promise) => {
+    if (reason && reason.message && (
+        reason.message.includes('Session closed') ||
+        reason.message.includes('Target closed') ||
+        reason.message.includes('Protocol error') ||
+        reason.message.includes('page has been closed')
+    )) {
+        // Игнорируем эти ошибки - они возникают при быстром закрытии страниц
+        console.log('[CLINE] ⚠️ Игнорируем ошибку закрытой сессии');
+        return;
+    }
+});
 
 // Конфигурация CLINE
 const CLINE_CONFIG = {
