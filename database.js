@@ -158,6 +158,17 @@ async function runMigrations() {
         }
     }
     
+    // Миграция: добавление session_token
+    if (!columns.includes('session_token')) {
+        console.log('📦 Миграция: добавление колонки session_token');
+        try {
+            db.run("ALTER TABLE accounts ADD COLUMN session_token TEXT");
+            console.log('✅ Колонка session_token добавлена');
+        } catch (err) {
+            console.log('⚠️ session_token: ' + err.message);
+        }
+    }
+    
     console.log('✅ Миграции выполнены');
 }
 

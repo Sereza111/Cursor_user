@@ -270,51 +270,132 @@ class ClineRegister {
             // ==========================================
             this.log('info', '🔍 Ищем кнопку Microsoft...');
 
-            // Ждём загрузки кнопок
-            await this.humanDelay(2000, 3000);
+            // Ждём загрузки страницы и кнопок
+            await this.humanDelay(3000, 5000);
+
+            // Получаем список всех элементов на странице для отладки
+            const pageInfo = await this.page.evaluate(() => {
+                const allButtons = Array.from(document.querySelectorAll('button, a, div[role="button"]'));
+                return allButtons.map(el => ({
+                    tag: el.tagName,
+                    text: el.textContent?.trim().substring(0, 100),
+                    className: el.className,
+                    id: el.id,
+                    href: el.href || null
+                }));
+            });
+            this.log('info', `📋 Найдено кликабельных элементов: ${pageInfo.length}`);
+            
+            // Логируем первые 10 элементов
+            pageInfo.slice(0, 10).forEach((el, i) => {
+                this.log('info', `  ${i}: [${el.tag}] "${el.text?.substring(0, 50)}" class="${el.className?.substring(0, 50)}"`);
+            });
 
             // Ищем кнопку Microsoft разными способами
-            const msButtonClicked = await this.page.evaluate(() => {
-                // Поиск по тексту
-                const buttons = document.querySelectorAll('button');
-                for (const btn of buttons) {
-                    const text = btn.textContent.toLowerCase();
-                    if (text.includes('microsoft')) {
-                        btn.click();
-                        return true;
+            let msButtonClicked = false;
+            
+            // Способ 1: Поиск по тексту содержащему "Microsoft"
+            msButtonClicked = await this.page.evaluate(() => {
+                // Ищем все кликабельные элементы
+                const elements = document.querySelectorAll('button, a, div[role="button"], span[role="button"]');
+                for (const el of elements) {
+                    const text = (el.textContent || '').toLowerCase();
+                    const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+                    
+                    if (text.includes('microsoft') || ariaLabel.includes('microsoft')) {
+                        console.log('Found Microsoft button:', el);
+                        el.click();
+                        return 'text';
                     }
                 }
-                
-                // Поиск по иконке/классу
-                const msBtn = document.querySelector('[data-provider="microsoft"], button[aria-label*="Microsoft"], a[href*="microsoft"]');
-                if (msBtn) {
-                    msBtn.click();
-                    return true;
-                }
-                
                 return false;
             });
 
             if (!msButtonClicked) {
-                // Пробуем найти по XPath или другим селекторам
-                try {
-                    await this.page.waitForSelector('button:has-text("Microsoft")', { timeout: 5000 });
-                    await this.page.click('button:has-text("Microsoft")');
-                } catch (e) {
-                    // Ищем любую кнопку с Microsoft
-                    const buttons = await this.page.$$('button');
-                    for (const btn of buttons) {
-                        const text = await btn.evaluate(el => el.textContent);
-                        if (text && text.toLowerCase().includes('microsoft')) {
-                            await btn.click();
-                            break;
+                this.log('info', '🔍 Способ 1 не сработал, пробуем способ 2...');
+                
+                // Способ 2: Поиск по изображению Microsoft или SVG
+                msButtonClicked = await this.page.evaluate(() => {
+                    // Ищем элементы с Microsoft иконкой
+                    const imgs = document.querySelectorAll('img, svg');
+                    for (const img of imgs) {
+                        const src = img.src || img.getAttribute('src') || '';
+                        const alt = img.alt || img.getAttribute('alt') || '';
+                        
+                        if (src.includes('microsoft') || alt.toLowerCase().includes('microsoft')) {
+                            // Кликаем на родительский элемент
+                            const parent = img.closest('button, a, div[role="button"]');
+                            if (parent) {
+                                parent.click();
+                                return 'icon';
+                            }
                         }
+                    }
+                    return false;
+                });
+            }
+
+            if (!msButtonClicked) {
+                this.log('info', '🔍 Способ 2 не сработал, пробуем способ 3...');
+                
+                // Способ 3: Поиск по классу или data атрибутам
+                msButtonClicked = await this.page.evaluate(() => {
+                    const selectors = [
+                        '[data-provider="microsoft"]',
+                        '[data-testid*="microsoft"]',
+                        '[class*="microsoft"]',
+                        '[class*="Microsoft"]',
+                        'button[name*="microsoft"]',
+                        'a[href*="microsoft"]'
+                    ];
+                    
+                    for (const selector of selectors) {
+                        const el = document.querySelector(selector);
+                        if (el) {
+                            el.click();
+                            return 'selector';
+                        }
+                    }
+                    return false;
+                });
+            }
+
+            if (!msButtonClicked) {
+                this.log('info', '🔍 Способ 3 не сработал, пробуем способ 4 (все кнопки)...');
+                
+                // Способ 4: Перебираем все кнопки через Puppeteer
+                const buttons = await this.page.$$('button, a[class*="btn"], div[role="button"]');
+                this.log('info', `📋 Всего кнопок для проверки: ${buttons.length}`);
+                
+                for (const btn of buttons) {
+                    const text = await btn.evaluate(el => el.textContent || '');
+                    const outerHTML = await btn.evaluate(el => el.outerHTML.substring(0, 200));
+                    this.log('info', `  Кнопка: "${text.trim().substring(0, 50)}" HTML: ${outerHTML.substring(0, 100)}`);
+                    
+                    if (text.toLowerCase().includes('microsoft') || 
+                        text.toLowerCase().includes('continue with') ||
+                        outerHTML.toLowerCase().includes('microsoft')) {
+                        this.log('info', '✅ Нашли кнопку Microsoft, кликаем...');
+                        await btn.click();
+                        msButtonClicked = 'puppeteer';
+                        break;
                     }
                 }
             }
 
-            this.log('info', '✅ Нажали на Microsoft, ожидаем редирект...');
-            await this.humanDelay(3000, 5000);
+            if (!msButtonClicked) {
+                this.log('warning', '⚠️ Кнопка Microsoft не найдена! Сохраняем HTML страницы...');
+                
+                // Сохраняем HTML для отладки
+                const html = await this.page.content();
+                require('fs').writeFileSync(`cline_debug_${accountId}.html`, html);
+                this.log('info', `💾 HTML сохранён в cline_debug_${accountId}.html`);
+            } else {
+                this.log('info', `✅ Нажали на Microsoft (способ: ${msButtonClicked}), ожидаем редирект...`);
+            }
+
+            // Ждём редирект на Microsoft
+            await this.humanDelay(5000, 7000);
 
             // Скриншот после клика
             await this.page.screenshot({ path: `cline_step2_ms_${accountId}.png` });
