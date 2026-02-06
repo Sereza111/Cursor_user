@@ -1593,31 +1593,64 @@ class ClineRegister {
                 this.log('info', '✅ Успешная авторизация! На странице CLINE');
                 
                 // ==========================================
-                // ПРОСТО БЕРЁМ ВСЕ COOKIES СЕССИИ
+                // БЕРЁМ ВСЕ COOKIES (без фильтрации)
                 // ==========================================
-                const allCookies = await this.page.cookies();
                 
-                // Фильтруем только cookies с домена cline.bot (исключаем аналитику)
-                const sessionCookies = allCookies.filter(c => {
-                    // Только cookies с домена cline.bot
-                    if (!c.domain.includes('cline.bot')) return false;
-                    
-                    // Исключаем аналитику
-                    if (c.name.startsWith('ph_')) return false;  // PostHog
-                    if (c.name.startsWith('_ga')) return false;  // Google Analytics
-                    if (c.name.startsWith('_gid')) return false;
-                    if (c.name.includes('posthog')) return false;
-                    
-                    return true;
-                });
+                // Получаем cookies со всех доменов CLINE
+                const clineUrls = [
+                    'https://cline.bot',
+                    'https://app.cline.bot', 
+                    'https://api.cline.bot',
+                    'https://authkit.cline.bot'
+                ];
                 
-                this.log('info', `🍪 Сессионных cookies: ${sessionCookies.length} шт.`);
+                let allCookies = [];
+                
+                // Собираем cookies со всех доменов
+                for (const url of clineUrls) {
+                    try {
+                        const cookies = await this.page.cookies(url);
+                        this.log('info', `🍪 Cookies с ${url}: ${cookies.length} шт.`);
+                        allCookies = allCookies.concat(cookies);
+                    } catch (e) {
+                        this.log('warning', `⚠️ Не удалось получить cookies с ${url}`);
+                    }
+                }
+                
+                // Также берём текущие cookies
+                const currentCookies = await this.page.cookies();
+                this.log('info', `🍪 Текущие cookies: ${currentCookies.length} шт.`);
+                
+                // Объединяем, убирая дубликаты
+                const cookieMap = new Map();
+                for (const c of [...allCookies, ...currentCookies]) {
+                    const key = `${c.domain}:${c.name}`;
+                    cookieMap.set(key, c);
+                }
+                
+                const sessionCookies = Array.from(cookieMap.values());
+                
+                this.log('info', `🍪 Всего уникальных cookies: ${sessionCookies.length} шт.`);
                 sessionCookies.forEach(c => {
-                    this.log('info', `  🍪 ${c.name}: ${c.value.substring(0, 50)}...`);
+                    this.log('info', `  🍪 [${c.domain}] ${c.name}: ${c.value.substring(0, 50)}...`);
                 });
+                
+                // Если cookies пустые - пробуем подождать и получить ещё раз
+                if (sessionCookies.length === 0) {
+                    this.log('warning', '⚠️ Cookies пустые! Ждём и пробуем снова...');
+                    await this.humanDelay(3000, 5000);
+                    
+                    const retryCookies = await this.page.cookies();
+                    this.log('info', `🍪 После ожидания: ${retryCookies.length} cookies`);
+                    
+                    if (retryCookies.length > 0) {
+                        sessionCookies.push(...retryCookies);
+                    }
+                }
                 
                 // Сохраняем cookies как JSON строку - это и есть сессия для авторизации
                 const sessionData = JSON.stringify(sessionCookies);
+                this.log('info', `💾 Сохраняем session_token длиной ${sessionData.length} символов`);
                 
                 const processingTime = Date.now() - startTime;
                 
