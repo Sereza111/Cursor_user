@@ -284,6 +284,37 @@ function stopPolling() {
 }
 
 /**
+ * Форматирование токена для отображения
+ */
+function formatTokenDisplay(token, serviceType) {
+    if (!token) return null;
+    
+    // Проверяем, является ли токен JSON массивом cookies (для CLINE)
+    if (token.startsWith('[')) {
+        try {
+            const cookies = JSON.parse(token);
+            if (Array.isArray(cookies) && cookies.length > 0) {
+                // Показываем понятную информацию о сессии
+                return {
+                    display: `✅ Сессия (${cookies.length} cookies)`,
+                    fullValue: token,
+                    isCookies: true
+                };
+            }
+        } catch (e) {
+            // Не JSON - показываем как есть
+        }
+    }
+    
+    // Обычный токен - показываем первые 25 символов
+    return {
+        display: token.substring(0, 25) + '...',
+        fullValue: token,
+        isCookies: false
+    };
+}
+
+/**
  * Обновление таблицы результатов
  */
 function updateResultsTable(accounts) {
@@ -298,10 +329,16 @@ function updateResultsTable(accounts) {
         const serviceClass = (acc.service_type || 'cursor') === 'cline' ? 'cline' : 'cursor';
         const serviceName = (acc.service_type || 'cursor').toUpperCase();
         
-        const hasToken = acc.session_token || acc.access_token;
-        const tokenDisplay = hasToken ? 
-            `<span class="token-cell has-token" title="${escapeHtml(acc.session_token || acc.access_token || '')}" onclick="copyToken(this)">${(acc.session_token || acc.access_token || '').substring(0, 20)}...</span>` :
-            '<span class="token-cell no-token">-</span>';
+        const rawToken = acc.session_token || acc.access_token;
+        const tokenInfo = formatTokenDisplay(rawToken, acc.service_type);
+        
+        let tokenDisplay;
+        if (tokenInfo) {
+            const cssClass = tokenInfo.isCookies ? 'has-token cookies-token' : 'has-token';
+            tokenDisplay = `<span class="token-cell ${cssClass}" title="Кликните для копирования" data-token="${escapeHtml(tokenInfo.fullValue)}" onclick="copyToken(this)">${tokenInfo.display}</span>`;
+        } else {
+            tokenDisplay = '<span class="token-cell no-token">-</span>';
+        }
         
         return `
             <tr>
@@ -320,11 +357,38 @@ function updateResultsTable(accounts) {
  * Копирование токена
  */
 window.copyToken = function(element) {
-    const token = element.title;
+    // Берём токен из data-token атрибута (содержит полные cookies)
+    const token = element.dataset.token || element.title;
+    
+    if (!token) {
+        addLog('warning', '⚠️ Токен пустой');
+        return;
+    }
+    
     navigator.clipboard.writeText(token).then(() => {
+        // Показываем обратную связь
+        const originalText = element.textContent;
+        element.textContent = '📋 Скопировано!';
         element.classList.add('copied');
-        setTimeout(() => element.classList.remove('copied'), 1000);
-        addLog('info', '📋 Токен скопирован в буфер обмена');
+        
+        setTimeout(() => {
+            element.textContent = originalText;
+            element.classList.remove('copied');
+        }, 1500);
+        
+        // Для cookies показываем сколько скопировано
+        if (token.startsWith('[')) {
+            try {
+                const cookies = JSON.parse(token);
+                addLog('info', `📋 Скопированы cookies сессии (${cookies.length} шт.) - используйте в local-rotator`);
+            } catch (e) {
+                addLog('info', '📋 Токен скопирован в буфер обмена');
+            }
+        } else {
+            addLog('info', '📋 Токен скопирован в буфер обмена');
+        }
+    }).catch(err => {
+        addLog('error', `❌ Ошибка копирования: ${err.message}`);
     });
 };
 
