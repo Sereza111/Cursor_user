@@ -307,21 +307,52 @@ async function startProcessing(sessionId, mode, proxies, service = 'cursor') {
                         success = true;
                         successCount++;
                         db.addLog(sessionId, 'info', `✅ ${account.email} - успешно!`);
-                    } else if (result.error?.includes('CAPTCHA') || result.error?.includes('rate') || result.error?.includes('2FA')) {
-                        // Retry при определённых ошибках
-                        retries++;
-                        if (retries < maxRetries) {
-                            db.addLog(sessionId, 'warning', `⏳ Retry ${retries}/${maxRetries} для ${account.email}`);
-                            await new Promise(r => setTimeout(r, delay * 2));
-                        }
                     } else {
-                        // Другие ошибки - не retry
-                        db.addLog(sessionId, 'error', `❌ ${account.email}: ${result.error || 'Неизвестная ошибка'}`);
-                        break;
+                        const errorMsg = result.error || 'Неизвестная ошибка';
+                        
+                        // Критические ошибки - НЕ делать retry, сразу пропускать
+                        const criticalErrors = [
+                            'blocked', 'access blocked', 'policy_denied', 
+                            'unusual activity', 'account locked', 'account suspended',
+                            'verification required', 'banned', 'disabled',
+                            'неверный email', 'wrong password', 'invalid credentials'
+                        ];
+                        
+                        const isCritical = criticalErrors.some(e => 
+                            errorMsg.toLowerCase().includes(e.toLowerCase())
+                        );
+                        
+                        if (isCritical) {
+                            // Критическая ошибка - пропускаем аккаунт без retry
+                            db.addLog(sessionId, 'error', `🚫 ${account.email}: ${errorMsg} (пропускаем)`);
+                            break;
+                        } else if (errorMsg.includes('CAPTCHA') || errorMsg.includes('rate') || errorMsg.includes('2FA')) {
+                            // Retry при временных ошибках
+                            retries++;
+                            if (retries < maxRetries) {
+                                db.addLog(sessionId, 'warning', `⏳ Retry ${retries}/${maxRetries} для ${account.email}`);
+                                await new Promise(r => setTimeout(r, delay * 2));
+                            }
+                        } else {
+                            // Другие ошибки - не retry
+                            db.addLog(sessionId, 'error', `❌ ${account.email}: ${errorMsg}`);
+                            break;
+                        }
                     }
                 } catch (err) {
+                    const errMsg = err.message || 'Неизвестная ошибка';
+                    
+                    // Критические ошибки из исключений
+                    const criticalErrors = ['blocked', 'policy_denied', 'locked', 'banned'];
+                    const isCritical = criticalErrors.some(e => errMsg.toLowerCase().includes(e));
+                    
+                    if (isCritical) {
+                        db.addLog(sessionId, 'error', `🚫 ${account.email}: ${errMsg} (пропускаем)`);
+                        break;
+                    }
+                    
                     retries++;
-                    db.addLog(sessionId, 'error', `❌ Ошибка ${account.email}: ${err.message}`);
+                    db.addLog(sessionId, 'error', `❌ Ошибка ${account.email}: ${errMsg}`);
                 }
             }
             

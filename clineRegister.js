@@ -6,6 +6,9 @@
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const db = require('./database');
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
 
 // Подключаем stealth плагин с отключением проблемных evasions
 const stealthPlugin = StealthPlugin();
@@ -128,7 +131,33 @@ class ClineRegister {
     }
 
     /**
-     * Запуск браузера
+     * Создание временной директории для профиля браузера
+     */
+    createTempProfileDir() {
+        const tempDir = path.join(os.tmpdir(), `cline-profile-${Date.now()}-${Math.random().toString(36).substring(7)}`);
+        if (!fs.existsSync(tempDir)) {
+            fs.mkdirSync(tempDir, { recursive: true });
+        }
+        this.tempProfileDir = tempDir;
+        return tempDir;
+    }
+
+    /**
+     * Удаление временной директории профиля
+     */
+    cleanupTempProfile() {
+        if (this.tempProfileDir && fs.existsSync(this.tempProfileDir)) {
+            try {
+                fs.rmSync(this.tempProfileDir, { recursive: true, force: true });
+                this.log('info', '🧹 Временный профиль удалён');
+            } catch (e) {
+                this.log('warning', `⚠️ Не удалось удалить профиль: ${e.message}`);
+            }
+        }
+    }
+
+    /**
+     * Запуск браузера с ИЗОЛИРОВАННЫМ профилем (без куков от прошлых сессий)
      */
     async launchBrowser(proxy = null) {
         const proxyConfig = this.parseProxy(proxy);
@@ -142,9 +171,15 @@ class ClineRegister {
             this.log('info', `🖥️ Используем DISPLAY=${process.env.DISPLAY}`);
         }
 
+        // Создаём ИЗОЛИРОВАННЫЙ временный профиль для этого аккаунта
+        const userDataDir = this.createTempProfileDir();
+        this.log('info', `📁 Создан изолированный профиль: ${userDataDir}`);
+
         const launchOptions = {
             headless: isHeadless,
             slowMo: CLINE_CONFIG.SLOW_MO,
+            // ВАЖНО: Используем отдельный профиль для каждого аккаунта
+            userDataDir: userDataDir,
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
@@ -156,7 +191,21 @@ class ClineRegister {
                 '--disable-blink-features=AutomationControlled',
                 '--disable-infobars',
                 '--lang=en-US,en',
-                '--start-maximized'
+                '--start-maximized',
+                // Отключаем сохранение паролей и автозаполнение
+                '--disable-save-password-bubble',
+                '--disable-translate',
+                '--disable-features=TranslateUI',
+                '--disable-sync',
+                '--disable-background-networking',
+                // Инкогнито-подобное поведение
+                '--disable-client-side-phishing-detection',
+                '--disable-default-apps',
+                '--disable-hang-monitor',
+                '--disable-popup-blocking',
+                '--disable-prompt-on-repost',
+                '--no-first-run',
+                '--no-default-browser-check'
             ],
             defaultViewport: null, // Используем реальный размер окна
             ignoreDefaultArgs: ['--enable-automation']
@@ -195,20 +244,27 @@ class ClineRegister {
             window.chrome = { runtime: {} };
         });
 
-        this.log('info', '🚀 Браузер запущен');
+        this.log('info', '🚀 Браузер запущен с чистым профилем');
         return this.browser;
     }
 
     /**
-     * Закрытие браузера
+     * Закрытие браузера и очистка временного профиля
      */
     async closeBrowser() {
         if (this.browser) {
-            await this.browser.close();
+            try {
+                await this.browser.close();
+            } catch (e) {
+                this.log('warning', `⚠️ Ошибка закрытия браузера: ${e.message}`);
+            }
             this.browser = null;
             this.page = null;
             this.log('info', 'Браузер закрыт');
         }
+        
+        // Очищаем временный профиль
+        this.cleanupTempProfile();
     }
 
     /**
