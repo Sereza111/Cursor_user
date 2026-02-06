@@ -254,19 +254,12 @@ async function startProcessing(sessionId, mode, proxies, service = 'cursor') {
     const delay = parseInt(process.env.REGISTER_DELAY) || 10000;
     const maxRetries = parseInt(process.env.MAX_RETRIES) || 3;
     
-    // Создаём экземпляр регистратора в зависимости от сервиса
-    let registrator;
-    if (service === 'cline') {
-        registrator = new ClineRegister(sessionId, proxies);
-        db.addLog(sessionId, 'info', `🤖 Запуск CLINE авторизации через Microsoft`);
-    } else {
-        registrator = new CursorRegister(sessionId, proxies);
-        db.addLog(sessionId, 'info', `🖱️ Запуск Cursor обработки в режиме: ${mode}`);
-    }
+    db.addLog(sessionId, 'info', service === 'cline' 
+        ? `🤖 Запуск CLINE авторизации через Microsoft` 
+        : `🖱️ Запуск Cursor обработки в режиме: ${mode}`);
     
-    // Сохраняем в активные сессии
+    // Сохраняем в активные сессии (без registrator - он создаётся для каждого аккаунта)
     activeSessions.set(sessionId, { 
-        registrator, 
         isRunning: true,
         mode,
         service
@@ -278,6 +271,7 @@ async function startProcessing(sessionId, mode, proxies, service = 'cursor') {
         let processed = 0;
         let successCount = 0;
         let failedCount = 0;
+        let consecutiveBlocks = 0; // Счётчик последовательных блокировок
         
         for (const account of pendingAccounts) {
             // Проверяем, не остановлена ли сессия
@@ -286,6 +280,25 @@ async function startProcessing(sessionId, mode, proxies, service = 'cursor') {
                 db.addLog(sessionId, 'info', 'Сессия остановлена пользователем');
                 break;
             }
+            
+            // Если много блокировок подряд - увеличиваем задержку
+            if (consecutiveBlocks >= 3) {
+                const longDelay = delay * 5; // 50 секунд вместо 10
+                db.addLog(sessionId, 'warning', `⏳ Много блокировок! Ждём ${longDelay/1000} сек перед следующим аккаунтом...`);
+                await new Promise(r => setTimeout(r, longDelay));
+                consecutiveBlocks = 0; // Сбрасываем после паузы
+            }
+            
+            // ВАЖНО: Создаём НОВЫЙ экземпляр регистратора для КАЖДОГО аккаунта
+            // Это даёт чистый browser fingerprint
+            let registrator;
+            if (service === 'cline') {
+                registrator = new ClineRegister(sessionId, proxies);
+            } else {
+                registrator = new CursorRegister(sessionId, proxies);
+            }
+            
+            db.addLog(sessionId, 'info', `🔄 Создан новый экземпляр браузера для ${account.email}`);
             
             // Обрабатываем аккаунт с retry
             let retries = 0;
@@ -306,9 +319,19 @@ async function startProcessing(sessionId, mode, proxies, service = 'cursor') {
                     if (result.success) {
                         success = true;
                         successCount++;
+                        consecutiveBlocks = 0; // Сбрасываем счётчик при успехе
                         db.addLog(sessionId, 'info', `✅ ${account.email} - успешно!`);
                     } else {
                         const errorMsg = result.error || 'Неизвестная ошибка';
+                        
+                        // Проверяем на блокировку
+                        const isBlocked = errorMsg.toLowerCase().includes('blocked') || 
+                                          errorMsg.toLowerCase().includes('access blocked');
+                        
+                        if (isBlocked) {
+                            consecutiveBlocks++;
+                            db.addLog(sessionId, 'warning', `🚫 Блокировка #${consecutiveBlocks}: ${account.email}`);
+                        }
                         
                         // Критические ошибки - НЕ делать retry, сразу пропускать
                         const criticalErrors = [
