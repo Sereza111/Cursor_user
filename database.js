@@ -485,7 +485,27 @@ function getDb() {
 // ==================== ФУНКЦИИ ДЛЯ TOKEN ROTATOR ====================
 
 /**
- * Получение неиспользованного токена CLINE
+ * Получение неиспользованной сессии CLINE (cookies)
+ * Используется local-rotator для авторизации
+ * @returns {Object|null} - Аккаунт с session_token (cookies) или null
+ */
+function getUnusedClineSession() {
+    return get(`
+        SELECT id, email, session_token, cline_balance, created_at
+        FROM accounts 
+        WHERE service_type = 'cline' 
+          AND status = 'success' 
+          AND session_token IS NOT NULL 
+          AND session_token != ''
+          AND session_token NOT LIKE '[{"name":"ph_%'
+          AND (used = 0 OR used IS NULL)
+        ORDER BY cline_balance DESC, created_at ASC
+        LIMIT 1
+    `);
+}
+
+/**
+ * Получение неиспользованного токена CLINE (legacy - для cline_token)
  * @returns {Object|null} - Аккаунт с токеном или null
  */
 function getUnusedClineToken() {
@@ -583,6 +603,7 @@ module.exports = {
     run,
     get,
     // Token Rotator функции
+    getUnusedClineSession,
     getUnusedClineToken,
     markClineTokenAsUsed,
     getClineTokenStats,

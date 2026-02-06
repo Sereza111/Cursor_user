@@ -1,19 +1,21 @@
 {
   "name": "cline-local-rotator",
-  "version": "1.0.0",
-  "description": "Локальный скрипт для ротации токенов CLINE в VS Code. Запускается на ПК с VS Code, получает токены с сервера.",
+  "version": "2.0.0",
+  "description": "Локальный скрипт для ротации токенов CLINE в VS Code. Получает cookies сессии с сервера, авторизуется через Puppeteer и устанавливает API key в VS Code.",
   "main": "rotator.js",
   "scripts": {
     "start": "node rotator.js",
     "check": "node rotator.js --check-only",
+    "test-fetch": "node rotator.js --test-fetch",
     "daemon": "node daemon.js"
   },
   "dependencies": {
     "keytar": "^7.9.0",
     "node-fetch": "^2.7.0",
-    "dotenv": "^16.3.1"
+    "dotenv": "^16.3.1",
+    "puppeteer": "^21.6.1"
   },
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=18.0.0"
   }
 }

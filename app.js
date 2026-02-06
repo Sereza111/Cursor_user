@@ -662,8 +662,9 @@ app.get('/api/token/stats', requireAuth, (req, res) => {
 });
 
 /**
- * Публичный endpoint для получения токена (с API ключом)
+ * Публичный endpoint для получения сессии CLINE (с API ключом)
  * Используется локальным скриптом без авторизации через сессию
+ * Возвращает cookies сессии для авторизации на cline.bot
  */
 app.get('/api/token/fetch', (req, res) => {
     const apiKey = req.headers['x-api-key'] || req.query.apiKey;
@@ -681,12 +682,13 @@ app.get('/api/token/fetch', (req, res) => {
     }
     
     try {
-        const account = db.getUnusedClineToken();
+        // Получаем аккаунт с session_token (cookies сессии)
+        const account = db.getUnusedClineSession();
         
         if (!account) {
             return res.status(404).json({ 
                 success: false,
-                error: 'Нет доступных токенов' 
+                error: 'Нет доступных сессий CLINE. Зарегистрируйте новые аккаунты.' 
             });
         }
         
@@ -695,9 +697,10 @@ app.get('/api/token/fetch', (req, res) => {
         
         res.json({
             success: true,
-            token: account.cline_token,
+            token: account.session_token, // JSON с cookies сессии
             email: account.email,
-            balance: account.cline_balance
+            balance: account.cline_balance || 0.5,
+            accountId: account.id
         });
         
     } catch (error) {
