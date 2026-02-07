@@ -259,6 +259,55 @@ class ClineRegister {
         });
 
         this.log('info', '🚀 Браузер запущен с чистым профилем');
+        
+        // Перехватываем callback URLs для извлечения токенов
+        this.capturedTokens = null;
+        this.page.on('response', async (response) => {
+            try {
+                const url = response.url();
+                
+                // Ловим callback URL с токенами
+                if (url.includes('/auth/callback') && url.includes('code=')) {
+                    const urlObj = new URL(url);
+                    const code = urlObj.searchParams.get('code');
+                    
+                    if (code) {
+                        this.log('info', `🔑 Перехвачен callback с code: ${code.substring(0, 50)}...`);
+                        
+                        // Декодируем base64 JSON
+                        try {
+                            // Убираем URL-safe символы и добавляем padding
+                            let base64 = code.replace(/-/g, '+').replace(/_/g, '/');
+                            while (base64.length % 4) {
+                                base64 += '=';
+                            }
+                            
+                            const decoded = Buffer.from(base64, 'base64').toString('utf-8');
+                            const tokenData = JSON.parse(decoded);
+                            
+                            if (tokenData.accessToken) {
+                                this.capturedTokens = {
+                                    accessToken: tokenData.accessToken,
+                                    refreshToken: tokenData.refreshToken,
+                                    email: tokenData.email,
+                                    firstName: tokenData.firstName,
+                                    lastName: tokenData.lastName,
+                                    expiresAt: tokenData.expiresAt
+                                };
+                                this.log('info', `✅ Извлечены токены из callback!`);
+                                this.log('info', `   accessToken: ${tokenData.accessToken.substring(0, 50)}...`);
+                                this.log('info', `   refreshToken: ${tokenData.refreshToken || 'N/A'}`);
+                            }
+                        } catch (e) {
+                            this.log('warning', `⚠️ Ошибка декодирования code: ${e.message}`);
+                        }
+                    }
+                }
+            } catch (e) {
+                // Игнорируем ошибки перехвата
+            }
+        });
+        
         return this.browser;
     }
 
@@ -1607,11 +1656,85 @@ class ClineRegister {
                 this.log('info', '✅ Успешная авторизация! На странице CLINE');
                 
                 // ==========================================
-                // ЭТАП 7: ПОЛУЧАЕМ API KEY СО СТРАНИЦЫ
+                // ЭТАП 7: ИЗВЛЕКАЕМ ACCESS TOKEN ИЗ CALLBACK URL
                 // ==========================================
-                this.log('info', '🔑 Пробуем получить API KEY...');
+                this.log('info', '🔑 Пробуем получить Access Token...');
                 
                 let apiKey = null;
+                let accessToken = null;
+                let refreshToken = null;
+                
+                // 1. Сначала проверяем перехваченные токены из callback URL
+                if (this.capturedTokens) {
+                    this.log('info', '✅ Используем перехваченные токены из callback!');
+                    accessToken = this.capturedTokens.accessToken;
+                    refreshToken = this.capturedTokens.refreshToken;
+                    this.log('info', `   accessToken: ${accessToken.substring(0, 50)}...`);
+                    this.log('info', `   refreshToken: ${refreshToken || 'N/A'}`);
+                }
+                
+                // 2. Если токены не перехвачены, пробуем извлечь из Storage
+                if (!accessToken) {
+                    try {
+                        // Также проверим localStorage на наличие сохранённых токенов
+                        const storedTokens = await this.page.evaluate(() => {
+                            const data = {};
+                            for (let i = 0; i < localStorage.length; i++) {
+                                const key = localStorage.key(i);
+                                const value = localStorage.getItem(key);
+                                if (key && (key.includes('token') || key.includes('session') || 
+                                           key.includes('auth') || key.includes('user'))) {
+                                    data[key] = value;
+                                }
+                            }
+                            // Также проверим sessionStorage
+                            for (let i = 0; i < sessionStorage.length; i++) {
+                                const key = sessionStorage.key(i);
+                                const value = sessionStorage.getItem(key);
+                                if (key && (key.includes('token') || key.includes('session') || 
+                                           key.includes('auth') || key.includes('user'))) {
+                                    data['session_' + key] = value;
+                                }
+                            }
+                            return data;
+                        });
+                        
+                        if (Object.keys(storedTokens).length > 0) {
+                            this.log('info', `💾 Найдены токены в Storage: ${JSON.stringify(Object.keys(storedTokens))}`);
+                            
+                            // Ищем access token
+                            for (const [key, value] of Object.entries(storedTokens)) {
+                                if (key.includes('access') || key.includes('token')) {
+                                    try {
+                                        // Может быть JSON
+                                        const parsed = JSON.parse(value);
+                                        if (parsed.accessToken) {
+                                            accessToken = parsed.accessToken;
+                                            refreshToken = parsed.refreshToken;
+                                            this.log('info', `✅ Найден accessToken в ${key}`);
+                                            break;
+                                        }
+                                        if (parsed.access_token) {
+                                            accessToken = parsed.access_token;
+                                            refreshToken = parsed.refresh_token;
+                                            this.log('info', `✅ Найден access_token в ${key}`);
+                                            break;
+                                        }
+                                    } catch (e) {
+                                        // Может быть просто строка-токен
+                                        if (value.startsWith('eyJ') || value.length > 100) {
+                                            accessToken = value;
+                                            this.log('info', `✅ Найден токен-строка в ${key}`);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        this.log('warning', `⚠️ Ошибка получения токенов из Storage: ${e.message}`);
+                    }
+                }
                 
                 // Пробуем разные страницы с API keys
                 const apiKeyUrls = [
