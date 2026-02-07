@@ -276,14 +276,59 @@ class ClineRegister {
                         
                         // Декодируем base64 JSON
                         try {
+                            // Формат code: {base64_json}-{signature}
+                            // Нужно отрезать подпись после последнего "}"
+                            // В base64: "}" = "fQ" или "In0" или "In1"
+                            
+                            let base64Part = code;
+                            
+                            // Ищем конец JSON в base64 (закрывающая скобка "}")
+                            // Паттерны для "}" в base64: fQ, In0, In1 (с разным padding)
+                            const endPatterns = ['In0', 'In1', 'fQ'];
+                            let foundEndIndex = -1;
+                            
+                            for (const pattern of endPatterns) {
+                                // Ищем последнее вхождение паттерна перед "-"
+                                const dashIndex = base64Part.lastIndexOf('-');
+                                if (dashIndex > 0) {
+                                    // Берём только часть до дефиса-подписи
+                                    const beforeDash = base64Part.substring(0, dashIndex);
+                                    for (const p of endPatterns) {
+                                        if (beforeDash.endsWith(p)) {
+                                            base64Part = beforeDash;
+                                            foundEndIndex = dashIndex;
+                                            break;
+                                        }
+                                    }
+                                    if (foundEndIndex > 0) break;
+                                    
+                                    // Если не нашли паттерн, просто берём до дефиса
+                                    base64Part = beforeDash;
+                                    break;
+                                }
+                            }
+                            
                             // Убираем URL-safe символы и добавляем padding
-                            let base64 = code.replace(/-/g, '+').replace(/_/g, '/');
+                            let base64 = base64Part.replace(/-/g, '+').replace(/_/g, '/');
                             while (base64.length % 4) {
                                 base64 += '=';
                             }
                             
                             const decoded = Buffer.from(base64, 'base64').toString('utf-8');
-                            const tokenData = JSON.parse(decoded);
+                            
+                            // Пробуем парсить JSON, если ошибка - обрезаем лишнее
+                            let tokenData;
+                            try {
+                                tokenData = JSON.parse(decoded);
+                            } catch (jsonErr) {
+                                // Может быть мусор после JSON, ищем закрывающую скобку
+                                const jsonEnd = decoded.lastIndexOf('}');
+                                if (jsonEnd > 0) {
+                                    tokenData = JSON.parse(decoded.substring(0, jsonEnd + 1));
+                                } else {
+                                    throw jsonErr;
+                                }
+                            }
                             
                             if (tokenData.accessToken) {
                                 this.capturedTokens = {
@@ -436,6 +481,79 @@ class ClineRegister {
                 if (!pageContent) continue;
                 
                 const { text, title } = pageContent;
+                
+                // ==========================================
+                // Диалог -1: Passkey enrollment - пропускаем (нажимаем Cancel)
+                // "We couldn't create a passkey" или "Create a passkey"
+                // ==========================================
+                if (currentUrl.includes('passkey') || currentUrl.includes('interrupt/passkey') ||
+                    text.includes('passkey') || text.includes('create a passkey') || 
+                    text.includes("couldn't create a passkey")) {
+                    
+                    this.log('info', '📋 Найден диалог Passkey enrollment - пропускаем');
+                    
+                    const cancelClicked = await this.safeAction(async () => {
+                        return await this.page.evaluate(() => {
+                            // Ищем кнопку Cancel/Skip/No thanks
+                            const buttons = document.querySelectorAll('button, input[type="submit"], input[type="button"], a');
+                            
+                            const skipTexts = ['cancel', 'skip', 'no thanks', 'not now', 'later', 'отмена', 'пропустить'];
+                            
+                            for (const btn of buttons) {
+                                const btnText = (btn.textContent || btn.value || '').toLowerCase().trim();
+                                console.log('Проверяем кнопку:', btnText);
+                                
+                                for (const skipText of skipTexts) {
+                                    if (btnText === skipText || btnText.includes(skipText)) {
+                                        console.log('Нашли кнопку Cancel:', btnText);
+                                        btn.click();
+                                        return `text:${btnText}`;
+                                    }
+                                }
+                            }
+                            
+                            // Пробуем найти по ID
+                            const idSelectors = [
+                                '#cancelButton', '#cancel', '#skipButton', '#skip',
+                                'button[data-testid="cancel"]', 'a[id*="cancel"]'
+                            ];
+                            
+                            for (const selector of idSelectors) {
+                                const btn = document.querySelector(selector);
+                                if (btn) {
+                                    console.log('Нашли кнопку Cancel по ID:', selector);
+                                    btn.click();
+                                    return selector;
+                                }
+                            }
+                            
+                            return false;
+                        });
+                    }, 'нажатие Cancel на Passkey');
+                    
+                    if (cancelClicked) {
+                        this.log('info', `✅ Нажали "Cancel" на Passkey enrollment (способ: ${cancelClicked})`);
+                        dialogsHandled++;
+                        await this.humanDelay(3000, 5000);
+                        continue;
+                    } else {
+                        this.log('warning', '⚠️ Не удалось найти кнопку Cancel, пробуем через Puppeteer...');
+                        
+                        // Пробуем через Puppeteer
+                        const buttons = await this.page.$$('button, a');
+                        for (const btn of buttons) {
+                            const text = await btn.evaluate(el => (el.textContent || el.value || '').toLowerCase().trim());
+                            if (text.includes('cancel') || text.includes('skip') || text.includes('no')) {
+                                this.log('info', `✅ Нашли кнопку через Puppeteer: "${text}"`);
+                                await btn.click();
+                                dialogsHandled++;
+                                await this.humanDelay(3000, 5000);
+                                break;
+                            }
+                        }
+                        continue;
+                    }
+                }
                 
                 // ==========================================
                 // Диалог 0: Microsoft Consent (microsoft.com/consent) - русский/английский
