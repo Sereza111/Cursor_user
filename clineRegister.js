@@ -1607,10 +1607,144 @@ class ClineRegister {
                 this.log('info', '✅ Успешная авторизация! На странице CLINE');
                 
                 // ==========================================
-                // БЕРЁМ ВСЕ COOKIES (без фильтрации)
+                // ЭТАП 7: ПОЛУЧАЕМ API KEY СО СТРАНИЦЫ
                 // ==========================================
+                this.log('info', '🔑 Пробуем получить API KEY...');
                 
-                // Получаем cookies со всех доменов CLINE
+                let apiKey = null;
+                
+                // Пробуем разные страницы с API keys
+                const apiKeyUrls = [
+                    'https://app.cline.bot/api-keys',
+                    'https://app.cline.bot/settings/api-keys',
+                    'https://app.cline.bot/settings',
+                    'https://app.cline.bot/account'
+                ];
+                
+                for (const apiUrl of apiKeyUrls) {
+                    try {
+                        this.log('info', `📍 Переходим на ${apiUrl}...`);
+                        await this.page.goto(apiUrl, {
+                            waitUntil: 'networkidle2',
+                            timeout: 30000
+                        });
+                        
+                        await this.humanDelay(2000, 3000);
+                        await this.page.screenshot({ path: `cline_apikeys_${accountId}.png` });
+                        
+                        // Проверяем не выкинуло ли на логин
+                        const currentPageUrl = this.page.url();
+                        if (currentPageUrl.includes('auth') || currentPageUrl.includes('login')) {
+                            this.log('warning', '⚠️ Редирект на логин, пропускаем URL');
+                            continue;
+                        }
+                        
+                        // Ищем существующий API key на странице
+                        apiKey = await this.page.evaluate(() => {
+                            const keyPatterns = [
+                                /sk-[a-zA-Z0-9_-]{20,}/,
+                                /cline_[a-zA-Z0-9_-]{20,}/,
+                                /clsk_[a-zA-Z0-9_-]{20,}/
+                            ];
+                            
+                            // Проверяем input поля (часто key в readonly input)
+                            const inputs = document.querySelectorAll('input, code, pre, span[class*="key"], div[class*="key"], td');
+                            for (const el of inputs) {
+                                const value = (el.value || el.textContent || '').trim();
+                                for (const pattern of keyPatterns) {
+                                    const match = value.match(pattern);
+                                    if (match) {
+                                        console.log('Найден API key в элементе:', el.tagName);
+                                        return match[0];
+                                    }
+                                }
+                            }
+                            
+                            // Проверяем весь текст страницы
+                            const bodyText = document.body.innerText;
+                            for (const pattern of keyPatterns) {
+                                const match = bodyText.match(pattern);
+                                if (match) {
+                                    console.log('Найден API key в тексте страницы');
+                                    return match[0];
+                                }
+                            }
+                            
+                            return null;
+                        });
+                        
+                        if (apiKey) {
+                            this.log('info', `✅ Найден API KEY: ${apiKey.substring(0, 20)}...`);
+                            break;
+                        }
+                        
+                        // Пробуем создать новый API key
+                        this.log('info', '🔄 API key не найден, пробуем создать новый...');
+                        
+                        const createClicked = await this.page.evaluate(() => {
+                            const createTexts = ['create', 'generate', 'new key', 'add key', 'создать', 'add api key'];
+                            const buttons = document.querySelectorAll('button, a[role="button"], [class*="btn"]');
+                            
+                            for (const btn of buttons) {
+                                const btnText = (btn.textContent || '').toLowerCase().trim();
+                                for (const text of createTexts) {
+                                    if (btnText.includes(text)) {
+                                        console.log('Нажимаем кнопку создания:', btnText);
+                                        btn.click();
+                                        return btnText;
+                                    }
+                                }
+                            }
+                            return false;
+                        });
+                        
+                        if (createClicked) {
+                            this.log('info', `🔄 Нажали "${createClicked}", ждём...`);
+                            await this.humanDelay(3000, 5000);
+                            await this.page.screenshot({ path: `cline_create_key_${accountId}.png` });
+                            
+                            // Ищем новый key в модальном окне или на странице
+                            apiKey = await this.page.evaluate(() => {
+                                const keyPatterns = [
+                                    /sk-[a-zA-Z0-9_-]{20,}/,
+                                    /cline_[a-zA-Z0-9_-]{20,}/,
+                                    /clsk_[a-zA-Z0-9_-]{20,}/
+                                ];
+                                
+                                // Проверяем модальные окна
+                                const modals = document.querySelectorAll('[role="dialog"], .modal, [class*="modal"], [class*="popup"]');
+                                for (const modal of modals) {
+                                    const modalText = modal.textContent || '';
+                                    for (const pattern of keyPatterns) {
+                                        const match = modalText.match(pattern);
+                                        if (match) return match[0];
+                                    }
+                                }
+                                
+                                // Снова проверяем всю страницу
+                                const bodyText = document.body.innerText;
+                                for (const pattern of keyPatterns) {
+                                    const match = bodyText.match(pattern);
+                                    if (match) return match[0];
+                                }
+                                
+                                return null;
+                            });
+                            
+                            if (apiKey) {
+                                this.log('info', `✅ Создан новый API KEY: ${apiKey.substring(0, 20)}...`);
+                                break;
+                            }
+                        }
+                        
+                    } catch (e) {
+                        this.log('warning', `⚠️ Ошибка на ${apiUrl}: ${e.message}`);
+                    }
+                }
+                
+                // ==========================================
+                // ТАКЖЕ БЕРЁМ COOKIES (для backup)
+                // ==========================================
                 const clineUrls = [
                     'https://cline.bot',
                     'https://app.cline.bot', 
@@ -1620,22 +1754,14 @@ class ClineRegister {
                 
                 let allCookies = [];
                 
-                // Собираем cookies со всех доменов
                 for (const url of clineUrls) {
                     try {
                         const cookies = await this.page.cookies(url);
-                        this.log('info', `🍪 Cookies с ${url}: ${cookies.length} шт.`);
                         allCookies = allCookies.concat(cookies);
-                    } catch (e) {
-                        this.log('warning', `⚠️ Не удалось получить cookies с ${url}`);
-                    }
+                    } catch (e) {}
                 }
                 
-                // Также берём текущие cookies
                 const currentCookies = await this.page.cookies();
-                this.log('info', `🍪 Текущие cookies: ${currentCookies.length} шт.`);
-                
-                // Объединяем, убирая дубликаты
                 const cookieMap = new Map();
                 for (const c of [...allCookies, ...currentCookies]) {
                     const key = `${c.domain}:${c.name}`;
@@ -1643,36 +1769,22 @@ class ClineRegister {
                 }
                 
                 const sessionCookies = Array.from(cookieMap.values());
+                this.log('info', `🍪 Собрано cookies: ${sessionCookies.length} шт.`);
                 
-                this.log('info', `🍪 Всего уникальных cookies: ${sessionCookies.length} шт.`);
-                sessionCookies.forEach(c => {
-                    this.log('info', `  🍪 [${c.domain}] ${c.name}: ${c.value.substring(0, 50)}...`);
-                });
-                
-                // Если cookies пустые - пробуем подождать и получить ещё раз
-                if (sessionCookies.length === 0) {
-                    this.log('warning', '⚠️ Cookies пустые! Ждём и пробуем снова...');
-                    await this.humanDelay(3000, 5000);
-                    
-                    const retryCookies = await this.page.cookies();
-                    this.log('info', `🍪 После ожидания: ${retryCookies.length} cookies`);
-                    
-                    if (retryCookies.length > 0) {
-                        sessionCookies.push(...retryCookies);
-                    }
-                }
-                
-                // Сохраняем cookies как JSON строку - это и есть сессия для авторизации
-                const sessionData = JSON.stringify(sessionCookies);
-                this.log('info', `💾 Сохраняем session_token длиной ${sessionData.length} символов`);
-                
+                // ==========================================
+                // СОХРАНЯЕМ РЕЗУЛЬТАТ
+                // ==========================================
                 const processingTime = Date.now() - startTime;
+                
+                // Если получили API key - сохраняем его как session_token
+                // Иначе сохраняем cookies
+                const tokenToSave = apiKey || JSON.stringify(sessionCookies);
                 
                 db.updateAccount(accountId, {
                     status: 'success',
                     trial_status: 'active',
-                    session_token: sessionData,  // ВСЕ cookies сессии
-                    access_token: accessToken,
+                    session_token: tokenToSave,  // API KEY или cookies
+                    access_token: apiKey || accessToken,
                     processing_time: processingTime
                 });
 
@@ -1681,8 +1793,9 @@ class ClineRegister {
                 return {
                     success: true,
                     email: email,
-                    sessionToken: sessionData,
-                    accessToken: accessToken,
+                    apiKey: apiKey,
+                    sessionToken: tokenToSave,
+                    accessToken: apiKey || accessToken,
                     cookies: sessionCookies,
                     finalUrl: finalUrl
                 };

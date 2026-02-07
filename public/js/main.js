@@ -289,16 +289,18 @@ function stopPolling() {
 function formatTokenDisplay(token, serviceType) {
     if (!token) return null;
     
-    // Проверяем, является ли токен JSON массивом cookies (для CLINE)
+    // Проверяем, является ли токен JSON массивом cookies (для CLINE - старые аккаунты)
     if (token.startsWith('[')) {
         try {
             const cookies = JSON.parse(token);
             if (Array.isArray(cookies) && cookies.length > 0) {
-                // Показываем понятную информацию о сессии
+                // Показываем информацию о сессии (это СТАРЫЙ формат - только cookies)
                 return {
-                    display: `✅ Сессия (${cookies.length} cookies)`,
+                    display: `🍪 Cookies (${cookies.length} шт.)`,
                     fullValue: token,
-                    isCookies: true
+                    isCookies: true,
+                    isApiKey: false,
+                    warning: 'Старый формат - только cookies, нужен API KEY'
                 };
             }
         } catch (e) {
@@ -306,11 +308,40 @@ function formatTokenDisplay(token, serviceType) {
         }
     }
     
-    // Обычный токен - показываем первые 25 символов
+    // Проверяем, является ли токен API KEY (для CLINE - новые аккаунты)
+    const apiKeyPatterns = [
+        /^sk-[a-zA-Z0-9_-]{20,}/,
+        /^cline_[a-zA-Z0-9_-]{20,}/,
+        /^clsk_[a-zA-Z0-9_-]{20,}/
+    ];
+    
+    for (const pattern of apiKeyPatterns) {
+        if (pattern.test(token)) {
+            return {
+                display: `🔑 ${token.substring(0, 20)}...`,
+                fullValue: token,
+                isCookies: false,
+                isApiKey: true
+            };
+        }
+    }
+    
+    // Для Cursor - обычный session token
+    if (serviceType === 'cursor') {
+        return {
+            display: token.substring(0, 25) + '...',
+            fullValue: token,
+            isCookies: false,
+            isApiKey: false
+        };
+    }
+    
+    // Неизвестный формат токена
     return {
         display: token.substring(0, 25) + '...',
         fullValue: token,
-        isCookies: false
+        isCookies: false,
+        isApiKey: false
     };
 }
 
@@ -334,7 +365,12 @@ function updateResultsTable(accounts) {
         
         let tokenDisplay;
         if (tokenInfo) {
-            const cssClass = tokenInfo.isCookies ? 'has-token cookies-token' : 'has-token';
+            let cssClass = 'has-token';
+            if (tokenInfo.isApiKey) {
+                cssClass = 'has-token api-key-token';
+            } else if (tokenInfo.isCookies) {
+                cssClass = 'has-token cookies-token';
+            }
             tokenDisplay = `<span class="token-cell ${cssClass}" title="Кликните для копирования" data-token="${escapeHtml(tokenInfo.fullValue)}" onclick="copyToken(this)">${tokenInfo.display}</span>`;
         } else {
             tokenDisplay = '<span class="token-cell no-token">-</span>';

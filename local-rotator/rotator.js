@@ -1,29 +1,27 @@
 /**
- * CLINE Local Token Rotator v2
+ * CLINE Local Token Rotator v3
  * =============================
  * 
  * Этот скрипт запускается на ПК с VS Code и CLINE.
- * Он получает cookies сессии с сервера и устанавливает авторизацию в VS Code.
+ * Он получает API KEY с сервера и устанавливает его в VS Code.
  * 
  * Как это работает:
- * 1. Скрипт получает cookies сессии CLINE с сервера панели
- * 2. Использует Puppeteer для авторизации на cline.bot с этими cookies
- * 3. Получает API key со страницы настроек
- * 4. Устанавливает API key в VS Code через keytar (SecretStorage)
- * 5. VS Code CLINE автоматически использует новый токен
+ * 1. Скрипт получает API KEY с сервера панели
+ * 2. Проверяет баланс через CLINE API
+ * 3. Устанавливает API key в VS Code через keytar (SecretStorage)
+ * 4. VS Code CLINE автоматически использует новый токен
+ * 
+ * ВАЖНО: Теперь сервер сразу получает API KEY при регистрации,
+ * поэтому Puppeteer не нужен!
  * 
  * Требования:
  * - Windows с VS Code и расширением CLINE
  * - Node.js 18+
- * - Chrome/Chromium для Puppeteer
  */
 
 require('dotenv').config();
 const fetch = require('node-fetch');
 const keytar = require('keytar');
-const puppeteer = require('puppeteer');
-const path = require('path');
-const fs = require('fs');
 
 // ==================== КОНФИГУРАЦИЯ ====================
 
@@ -32,22 +30,15 @@ const CONFIG = {
     SERVICE_NAME: 'saoudrizwan.claude-dev',
     ACCOUNT_NAME: 'clineApiKey',
     
-    // CLINE URLs
-    CLINE_DASHBOARD: 'https://app.cline.bot/dashboard',
-    CLINE_SETTINGS: 'https://app.cline.bot/settings',
-    CLINE_API_KEYS: 'https://app.cline.bot/api-keys',
+    // CLINE API для проверки баланса
     CLINE_API_URL: 'https://api.cline.bot/api/user',
     
     // Сервер с панелью регистрации
     SERVER_URL: process.env.SERVER_URL || 'http://localhost:3000',
     API_KEY: process.env.API_KEY || '',
     
-    // Минимальный баланс для замены
+    // Минимальный баланс для замены (в долларах)
     MIN_BALANCE: parseFloat(process.env.MIN_BALANCE) || 0.10,
-    
-    // Puppeteer настройки
-    HEADLESS: process.env.HEADLESS !== 'false',
-    TIMEOUT: parseInt(process.env.TIMEOUT) || 30000,
     
     // Режим отладки
     VERBOSE: process.env.VERBOSE === 'true'
@@ -70,10 +61,6 @@ function log(message, level = 'info') {
     console.log(`[${timestamp}] ${prefix} ${message}`);
 }
 
-function delay(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-
 // ==================== РАБОТА С VS CODE SECRET STORAGE ====================
 
 /**
@@ -83,7 +70,7 @@ async function getCurrentApiKey() {
     try {
         const apiKey = await keytar.getPassword(CONFIG.SERVICE_NAME, CONFIG.ACCOUNT_NAME);
         if (apiKey) {
-            log(`Текущий API key найден (${apiKey.substring(0, 20)}...)`, 'debug');
+            log(`Текущий API key: ${apiKey.substring(0, 20)}...`, 'debug');
         } else {
             log('API key не найден в VS Code', 'warning');
         }
@@ -111,11 +98,17 @@ async function setNewApiKey(apiKey) {
 // ==================== РАБОТА С CLINE API ====================
 
 /**
- * Проверить баланс текущего API key
+ * Проверить баланс API key через CLINE API
  */
 async function checkBalance(apiKey) {
     if (!apiKey) {
         return { success: false, balance: 0, error: 'API key не указан' };
+    }
+    
+    // Проверяем формат - должен быть API KEY, а не JSON cookies
+    if (apiKey.startsWith('[') || apiKey.startsWith('{')) {
+        log('Токен является cookies, а не API KEY', 'warning');
+        return { success: false, balance: 0, error: 'Токен является cookies, требуется API KEY' };
     }
     
     try {
@@ -138,7 +131,7 @@ async function checkBalance(apiKey) {
         const data = await response.json();
         const balance = data.credits || data.balance || 0;
         
-        log(`Текущий баланс: $${balance.toFixed(4)}`, 'info');
+        log(`Баланс: $${balance.toFixed(4)}`, 'info');
         
         return { success: true, balance, email: data.email };
         
@@ -151,9 +144,9 @@ async function checkBalance(apiKey) {
 // ==================== РАБОТА С СЕРВЕРОМ ====================
 
 /**
- * Получить cookies сессии с сервера
+ * Получить API KEY с сервера
  */
-async function fetchSessionFromServer() {
+async function fetchApiKeyFromServer() {
     if (!CONFIG.API_KEY) {
         log('API_KEY не настроен! Добавьте его в .env', 'error');
         return null;
@@ -161,7 +154,7 @@ async function fetchSessionFromServer() {
     
     const url = `${CONFIG.SERVER_URL}/api/token/fetch`;
     
-    log(`Запрос сессии с сервера: ${CONFIG.SERVER_URL}`, 'info');
+    log(`Запрос API KEY с сервера: ${CONFIG.SERVER_URL}`, 'info');
     
     try {
         const response = await fetch(url, {
@@ -180,12 +173,27 @@ async function fetchSessionFromServer() {
             return null;
         }
         
-        // token содержит JSON с cookies
-        log(`Получена сессия: ${data.email}`, 'success');
+        const token = data.token;
+        
+        // Проверяем что это API KEY, а не cookies
+        if (!token) {
+            log('Сервер вернул пустой токен', 'error');
+            return null;
+        }
+        
+        if (token.startsWith('[') || token.startsWith('{')) {
+            log('⚠️ Сервер вернул COOKIES вместо API KEY!', 'warning');
+            log('Аккаунт был зарегистрирован до обновления - API KEY недоступен', 'warning');
+            log('Нужно зарегистрировать новый аккаунт', 'warning');
+            return null;
+        }
+        
+        log(`✅ Получен API KEY: ${token.substring(0, 20)}...`, 'success');
+        log(`   Email: ${data.email}`, 'info');
         
         return {
+            apiKey: token,
             email: data.email,
-            cookies: data.token, // JSON строка с cookies
             balance: data.balance
         };
         
@@ -195,274 +203,12 @@ async function fetchSessionFromServer() {
     }
 }
 
-// ==================== PUPPETEER: ПОЛУЧЕНИЕ API KEY ====================
-
 /**
- * Использовать cookies сессии для получения API key через Puppeteer
+ * Отметить аккаунт как использованный (опционально)
  */
-async function getApiKeyFromSession(sessionData) {
-    log('🚀 Запускаем браузер для получения API key...', 'info');
-    
-    let browser = null;
-    
-    try {
-        // Парсим cookies
-        let cookies;
-        try {
-            cookies = typeof sessionData.cookies === 'string' 
-                ? JSON.parse(sessionData.cookies) 
-                : sessionData.cookies;
-        } catch (e) {
-            log(`Ошибка парсинга cookies: ${e.message}`, 'error');
-            return null;
-        }
-        
-        if (!cookies || !Array.isArray(cookies) || cookies.length === 0) {
-            log('Cookies пусты или неверного формата', 'error');
-            return null;
-        }
-        
-        log(`Загружено cookies: ${cookies.length} шт.`, 'debug');
-        
-        // Запускаем браузер
-        browser = await puppeteer.launch({
-            headless: CONFIG.HEADLESS,
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--window-size=1366,768'
-            ],
-            defaultViewport: { width: 1366, height: 768 }
-        });
-        
-        const page = await browser.newPage();
-        
-        // Устанавливаем cookies
-        log('🍪 Устанавливаем cookies сессии...', 'info');
-        
-        for (const cookie of cookies) {
-            try {
-                // Преобразуем формат cookies для Puppeteer
-                const puppeteerCookie = {
-                    name: cookie.name,
-                    value: cookie.value,
-                    domain: cookie.domain || '.cline.bot',
-                    path: cookie.path || '/',
-                    secure: cookie.secure !== false,
-                    httpOnly: cookie.httpOnly || false,
-                    sameSite: cookie.sameSite || 'Lax'
-                };
-                
-                // Удаляем expires если он некорректный
-                if (cookie.expires && cookie.expires > 0) {
-                    puppeteerCookie.expires = cookie.expires;
-                }
-                
-                await page.setCookie(puppeteerCookie);
-                log(`  ✓ ${cookie.name}`, 'debug');
-            } catch (e) {
-                log(`  ✗ ${cookie.name}: ${e.message}`, 'debug');
-            }
-        }
-        
-        // Переходим на dashboard для проверки авторизации
-        log('📍 Переходим на dashboard CLINE...', 'info');
-        
-        await page.goto(CONFIG.CLINE_DASHBOARD, {
-            waitUntil: 'networkidle2',
-            timeout: CONFIG.TIMEOUT
-        });
-        
-        await delay(3000);
-        
-        const currentUrl = page.url();
-        log(`📍 URL: ${currentUrl}`, 'debug');
-        
-        // Проверяем авторизованы ли мы
-        if (currentUrl.includes('auth') || currentUrl.includes('login') || currentUrl.includes('signin')) {
-            log('❌ Cookies не работают - требуется авторизация', 'error');
-            
-            // Сохраняем скриншот для отладки
-            await page.screenshot({ path: 'debug_auth_required.png' });
-            
-            await browser.close();
-            return null;
-        }
-        
-        log('✅ Авторизация через cookies успешна!', 'success');
-        
-        // Пробуем получить баланс со страницы
-        const pageData = await page.evaluate(() => {
-            const text = document.body.innerText;
-            
-            // Ищем баланс
-            const balanceMatch = text.match(/\$[\d.]+/) || text.match(/credits?:?\s*[\d.]+/i);
-            
-            return {
-                text: text.substring(0, 1000),
-                balance: balanceMatch ? balanceMatch[0] : null
-            };
-        });
-        
-        if (pageData.balance) {
-            log(`💰 Баланс на dashboard: ${pageData.balance}`, 'info');
-        }
-        
-        // ==========================================
-        // Получаем API key
-        // ==========================================
-        
-        log('🔑 Переходим на страницу API keys...', 'info');
-        
-        // Пробуем разные URL для страницы с API keys
-        const apiKeyUrls = [
-            'https://app.cline.bot/api-keys',
-            'https://app.cline.bot/settings/api-keys',
-            'https://app.cline.bot/settings',
-            'https://app.cline.bot/account/api-keys'
-        ];
-        
-        let apiKey = null;
-        
-        for (const url of apiKeyUrls) {
-            try {
-                log(`  Пробуем: ${url}`, 'debug');
-                
-                await page.goto(url, {
-                    waitUntil: 'networkidle2',
-                    timeout: CONFIG.TIMEOUT
-                });
-                
-                await delay(2000);
-                
-                // Ищем API key на странице
-                apiKey = await page.evaluate(() => {
-                    // Ищем элементы содержащие API key
-                    const keyPatterns = [
-                        /sk-[a-zA-Z0-9]{20,}/,  // Формат sk-...
-                        /cline_[a-zA-Z0-9]{20,}/, // Формат cline_...
-                        /api[_-]?key[_-]?[a-zA-Z0-9]{20,}/i
-                    ];
-                    
-                    // Проверяем input поля
-                    const inputs = document.querySelectorAll('input, code, pre, span[class*="key"], div[class*="key"]');
-                    for (const el of inputs) {
-                        const value = el.value || el.textContent || '';
-                        for (const pattern of keyPatterns) {
-                            const match = value.match(pattern);
-                            if (match) {
-                                return match[0];
-                            }
-                        }
-                    }
-                    
-                    // Проверяем весь текст страницы
-                    const text = document.body.innerText;
-                    for (const pattern of keyPatterns) {
-                        const match = text.match(pattern);
-                        if (match) {
-                            return match[0];
-                        }
-                    }
-                    
-                    return null;
-                });
-                
-                if (apiKey) {
-                    log(`🔑 Найден API key: ${apiKey.substring(0, 15)}...`, 'success');
-                    break;
-                }
-                
-                // Пробуем нажать кнопку "Generate API Key" или "Create"
-                const generated = await page.evaluate(() => {
-                    const buttons = document.querySelectorAll('button');
-                    for (const btn of buttons) {
-                        const text = btn.textContent?.toLowerCase() || '';
-                        if (text.includes('generate') || text.includes('create') || 
-                            text.includes('new key') || text.includes('add key')) {
-                            btn.click();
-                            return true;
-                        }
-                    }
-                    return false;
-                });
-                
-                if (generated) {
-                    log('🔄 Нажали кнопку генерации API key, ждём...', 'info');
-                    await delay(3000);
-                    
-                    // Повторно ищем key
-                    apiKey = await page.evaluate(() => {
-                        const keyPatterns = [
-                            /sk-[a-zA-Z0-9]{20,}/,
-                            /cline_[a-zA-Z0-9]{20,}/
-                        ];
-                        
-                        const text = document.body.innerText;
-                        for (const pattern of keyPatterns) {
-                            const match = text.match(pattern);
-                            if (match) return match[0];
-                        }
-                        
-                        // Проверяем модальные окна
-                        const modals = document.querySelectorAll('[role="dialog"], .modal, [class*="modal"]');
-                        for (const modal of modals) {
-                            const modalText = modal.textContent || '';
-                            for (const pattern of keyPatterns) {
-                                const match = modalText.match(pattern);
-                                if (match) return match[0];
-                            }
-                        }
-                        
-                        return null;
-                    });
-                    
-                    if (apiKey) {
-                        log(`🔑 Сгенерирован API key: ${apiKey.substring(0, 15)}...`, 'success');
-                        break;
-                    }
-                }
-                
-            } catch (e) {
-                log(`  ✗ ${url}: ${e.message}`, 'debug');
-            }
-        }
-        
-        // Сохраняем скриншот для отладки
-        await page.screenshot({ path: 'debug_api_keys_page.png' });
-        
-        await browser.close();
-        
-        if (!apiKey) {
-            log('❌ API key не найден на странице', 'error');
-            log('💡 Возможно CLINE использует другой метод авторизации', 'warning');
-            
-            // Пробуем использовать сами cookies как "токен"
-            // Некоторые приложения принимают session cookie как Bearer токен
-            const sessionCookie = cookies.find(c => 
-                c.name.includes('session') || 
-                c.name.includes('token') ||
-                c.name.includes('auth')
-            );
-            
-            if (sessionCookie) {
-                log(`💡 Пробуем использовать cookie "${sessionCookie.name}" как токен`, 'info');
-                return sessionCookie.value;
-            }
-        }
-        
-        return apiKey;
-        
-    } catch (err) {
-        log(`❌ Ошибка Puppeteer: ${err.message}`, 'error');
-        
-        if (browser) {
-            await browser.close();
-        }
-        
-        return null;
-    }
+async function markAccountUsed(email) {
+    // Можно реализовать если нужно отслеживать использование
+    log(`Аккаунт ${email} помечен как используемый`, 'debug');
 }
 
 // ==================== ОСНОВНАЯ ЛОГИКА ====================
@@ -472,7 +218,7 @@ async function getApiKeyFromSession(sessionData) {
  */
 async function checkAndRotate() {
     console.log('\n' + '='.repeat(50));
-    log('CLINE Local Token Rotator v2', 'info');
+    log('CLINE Local Token Rotator v3', 'info');
     console.log('='.repeat(50) + '\n');
     
     // 1. Получаем текущий API key из VS Code
@@ -481,57 +227,67 @@ async function checkAndRotate() {
     if (!currentApiKey) {
         log('В VS Code нет API key, получаем новый...', 'warning');
         
-        const session = await fetchSessionFromServer();
-        if (session) {
-            const newApiKey = await getApiKeyFromSession(session);
-            if (newApiKey) {
-                await setNewApiKey(newApiKey);
-                log('API key успешно установлен! Перезапустите VS Code.', 'success');
+        const serverData = await fetchApiKeyFromServer();
+        if (serverData && serverData.apiKey) {
+            const success = await setNewApiKey(serverData.apiKey);
+            if (success) {
+                log('✅ API key успешно установлен!', 'success');
+                log('🔄 Перезапустите VS Code для применения', 'info');
             }
+        } else {
+            log('❌ Не удалось получить API KEY с сервера', 'error');
+            log('💡 Возможно все аккаунты - это старые с cookies', 'info');
+            log('💡 Зарегистрируйте новый аккаунт CLINE через панель', 'info');
         }
         return;
     }
     
-    // 2. Проверяем баланс
-    const { success, balance, error } = await checkBalance(currentApiKey);
+    // 2. Проверяем баланс текущего API key
+    const { success, balance, error, email } = await checkBalance(currentApiKey);
     
     if (!success) {
         log(`Проблема с текущим API key: ${error}`, 'warning');
-        log('Получаем новую сессию...', 'info');
+        log('Получаем новый API KEY с сервера...', 'info');
         
-        const session = await fetchSessionFromServer();
-        if (session) {
-            const newApiKey = await getApiKeyFromSession(session);
-            if (newApiKey) {
-                await setNewApiKey(newApiKey);
-                log('API key заменён! Перезапустите VS Code.', 'success');
+        const serverData = await fetchApiKeyFromServer();
+        if (serverData && serverData.apiKey) {
+            const setSuccess = await setNewApiKey(serverData.apiKey);
+            if (setSuccess) {
+                log('✅ API key заменён!', 'success');
+                log('🔄 Перезапустите VS Code для применения', 'info');
             }
+        } else {
+            log('❌ Не удалось получить новый API KEY', 'error');
         }
         return;
     }
     
-    // 3. Проверяем нужна ли замена
+    // 3. Проверяем нужна ли замена по балансу
     if (balance < CONFIG.MIN_BALANCE) {
-        log(`Баланс $${balance.toFixed(4)} ниже минимума $${CONFIG.MIN_BALANCE}`, 'warning');
-        log('Получаем новую сессию...', 'info');
+        log(`⚠️ Баланс $${balance.toFixed(4)} ниже минимума $${CONFIG.MIN_BALANCE}`, 'warning');
+        log('Получаем новый API KEY с сервера...', 'info');
         
-        const session = await fetchSessionFromServer();
-        if (session) {
-            const newApiKey = await getApiKeyFromSession(session);
-            if (newApiKey) {
-                await setNewApiKey(newApiKey);
-                
+        const serverData = await fetchApiKeyFromServer();
+        if (serverData && serverData.apiKey) {
+            const setSuccess = await setNewApiKey(serverData.apiKey);
+            if (setSuccess) {
                 // Проверяем баланс нового токена
-                const newBalance = await checkBalance(newApiKey);
-                if (newBalance.success) {
-                    log(`Новый баланс: $${newBalance.balance.toFixed(4)}`, 'success');
+                const newBalanceCheck = await checkBalance(serverData.apiKey);
+                if (newBalanceCheck.success) {
+                    log(`💰 Новый баланс: $${newBalanceCheck.balance.toFixed(4)}`, 'success');
                 }
-                
-                log('API key заменён! Перезапустите VS Code для применения.', 'success');
+                log('✅ API key заменён!', 'success');
+                log('🔄 Перезапустите VS Code для применения', 'info');
             }
+        } else {
+            log('❌ Не удалось получить новый API KEY', 'error');
         }
     } else {
-        log(`Баланс в норме ($${balance.toFixed(4)} >= $${CONFIG.MIN_BALANCE}). Замена не требуется.`, 'success');
+        log(`✅ Баланс в норме: $${balance.toFixed(4)} (минимум: $${CONFIG.MIN_BALANCE})`, 'success');
+        if (email) {
+            log(`   Email: ${email}`, 'info');
+        }
+        log('Замена не требуется', 'info');
     }
 }
 
@@ -547,6 +303,14 @@ async function checkOnly() {
     
     if (!currentApiKey) {
         log('API key не найден в VS Code', 'error');
+        log('💡 Запустите скрипт без флагов для получения API KEY', 'info');
+        return;
+    }
+    
+    // Проверяем формат
+    if (currentApiKey.startsWith('[') || currentApiKey.startsWith('{')) {
+        log('⚠️ В VS Code установлены COOKIES, а не API KEY', 'warning');
+        log('💡 Запустите скрипт без флагов для получения правильного API KEY', 'info');
         return;
     }
     
@@ -564,33 +328,60 @@ async function checkOnly() {
 }
 
 /**
- * Тестовое получение сессии с сервера
+ * Тестовое получение API KEY с сервера
  */
 async function testFetch() {
     console.log('\n' + '='.repeat(50));
-    log('Тест получения сессии с сервера', 'info');
+    log('Тест получения API KEY с сервера', 'info');
     console.log('='.repeat(50) + '\n');
     
-    const session = await fetchSessionFromServer();
+    const serverData = await fetchApiKeyFromServer();
     
-    if (session) {
-        console.log('\n📊 Полученная сессия:');
-        console.log(`   Email: ${session.email}`);
-        console.log(`   Баланс: $${session.balance || '?'}`);
-        console.log(`   Cookies: ${session.cookies ? 'получены' : 'отсутствуют'}`);
+    if (serverData) {
+        console.log('\n📊 Полученные данные:');
+        console.log(`   Email: ${serverData.email}`);
+        console.log(`   API KEY: ${serverData.apiKey.substring(0, 25)}...`);
+        console.log(`   Баланс: $${serverData.balance || '?'}`);
         
-        // Парсим и показываем cookies
-        try {
-            const cookies = JSON.parse(session.cookies);
-            console.log(`   Количество cookies: ${cookies.length}`);
-            cookies.forEach(c => {
-                console.log(`     - ${c.name}: ${c.value.substring(0, 30)}...`);
-            });
-        } catch (e) {
-            console.log(`   Ошибка парсинга cookies: ${e.message}`);
+        // Проверяем баланс через API
+        log('\nПроверка баланса через CLINE API...', 'info');
+        const balanceCheck = await checkBalance(serverData.apiKey);
+        if (balanceCheck.success) {
+            console.log(`   Проверенный баланс: $${balanceCheck.balance.toFixed(4)}`);
+        } else {
+            console.log(`   Ошибка проверки: ${balanceCheck.error}`);
         }
     } else {
-        log('Не удалось получить сессию', 'error');
+        log('Не удалось получить API KEY', 'error');
+    }
+}
+
+/**
+ * Принудительная установка API KEY
+ */
+async function forceSet() {
+    console.log('\n' + '='.repeat(50));
+    log('Принудительная установка API KEY', 'info');
+    console.log('='.repeat(50) + '\n');
+    
+    const serverData = await fetchApiKeyFromServer();
+    
+    if (serverData && serverData.apiKey) {
+        log(`Устанавливаем API KEY от ${serverData.email}...`, 'info');
+        
+        const success = await setNewApiKey(serverData.apiKey);
+        if (success) {
+            log('✅ API key установлен!', 'success');
+            log('🔄 Перезапустите VS Code для применения', 'info');
+            
+            // Проверяем баланс
+            const balanceCheck = await checkBalance(serverData.apiKey);
+            if (balanceCheck.success) {
+                log(`💰 Баланс: $${balanceCheck.balance.toFixed(4)}`, 'info');
+            }
+        }
+    } else {
+        log('❌ Не удалось получить API KEY', 'error');
     }
 }
 
@@ -607,7 +398,6 @@ async function main() {
     console.log(`   Сервер: ${CONFIG.SERVER_URL}`);
     console.log(`   API Key: ${CONFIG.API_KEY ? '***настроен***' : '❌ НЕ НАСТРОЕН'}`);
     console.log(`   Мин. баланс: $${CONFIG.MIN_BALANCE}`);
-    console.log(`   Headless: ${CONFIG.HEADLESS}`);
     
     // Проверяем режим запуска
     const args = process.argv.slice(2);
@@ -616,6 +406,15 @@ async function main() {
         await checkOnly();
     } else if (args.includes('--test-fetch') || args.includes('-t')) {
         await testFetch();
+    } else if (args.includes('--force') || args.includes('-f')) {
+        await forceSet();
+    } else if (args.includes('--help') || args.includes('-h')) {
+        console.log('\n📖 Использование:');
+        console.log('   node rotator.js          - Проверка и автозамена при необходимости');
+        console.log('   node rotator.js -c       - Только проверка баланса');
+        console.log('   node rotator.js -t       - Тест получения с сервера');
+        console.log('   node rotator.js -f       - Принудительная установка нового API KEY');
+        console.log('   node rotator.js -h       - Показать справку');
     } else {
         await checkAndRotate();
     }
@@ -630,4 +429,4 @@ main().catch(err => {
 });
 
 // Экспорт для daemon.js
-module.exports = { checkAndRotate, checkOnly, checkBalance, getCurrentApiKey };
+module.exports = { checkAndRotate, checkOnly, checkBalance, getCurrentApiKey, setNewApiKey };
